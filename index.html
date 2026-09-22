@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>SLAM Door-Width POC</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    /* FullWindowCanvas resizes the drawing buffer; this keeps the element full-bleed before it runs. */
+    #camerafeed {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
+    }
+
+    /* Taps fall through to the camera canvas except on controls, the list, and the license link. */
+    #overlay {
+      display: none;
+      position: absolute;
+      inset: 0;
+      flex-direction: column;
+      pointer-events: none;
+      color: #f4f1ea;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+    }
+
+    #overlay.is-ready {
+      display: flex;
+    }
+
+    #statusBar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.6rem 0.75rem;
+      background: rgba(8, 10, 12, 0.72);
+      font-size: 0.95rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #trackingStatus,
+    #cameraHeight,
+    #instructionText,
+    #resultSecondary,
+    #measurementSummary {
+      margin: 0;
+    }
+
+    #trackingStatus {
+      font-weight: 700;
+      color: #ffb020;
+    }
+
+    #trackingStatus.is-normal {
+      color: #3ddc6e;
+    }
+
+    #cameraHeight {
+      white-space: nowrap;
+    }
+
+    #instructionText {
+      margin: 0.45rem 0.75rem 0;
+      padding: 0.55rem 0.7rem;
+      background: rgba(8, 10, 12, 0.62);
+      border-radius: 8px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+
+    #instructionText.is-flashing {
+      animation: instruction-flash 0.35s ease-in-out 3;
+    }
+
+    @keyframes instruction-flash {
+      50% { background: #8a4b00; }
+    }
+
+    #readout {
+      margin-top: auto;
+      padding: 0.75rem 0.75rem 0.35rem;
+      background: linear-gradient(transparent, rgba(8, 10, 12, 0.78) 30%);
+    }
+
+    #resultInches {
+      display: block;
+      font-size: clamp(3rem, 14vw, 4.4rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 0.95;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #resultInches:empty,
+    #resultCentimeters:empty,
+    #resultSecondary:empty {
+      display: none;
+    }
+
+    #resultCentimeters {
+      display: block;
+      margin-top: 0.2rem;
+      font-size: 1.2rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #resultSecondary {
+      margin-top: 0.35rem;
+      font-size: 0.95rem;
+      color: #efe6d4;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-top: 0.75rem;
+      pointer-events: auto;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      background: #f4f1ea;
+      color: #1a1714;
+      font: 600 0.95rem/1.1 inherit;
+      padding: 0.7rem 0.9rem;
+      min-height: 44px;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    #measurementList {
+      margin-top: 0.5rem;
+      background: rgba(8, 10, 12, 0.55);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      line-height: 1.35;
+      pointer-events: auto;
+      user-select: text;
+    }
+
+    #measurementSummary {
+      padding: 0.5rem 0.65rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    #measurementRows {
+      max-height: 26vh;
+      overflow: auto;
+    }
+
+    .measurement-row,
+    .measurement-empty {
+      margin: 0;
+      padding: 0.4rem 0.65rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #credits {
+      padding: 0.4rem 0.75rem 0.55rem;
+      background: rgba(8, 10, 12, 0.88);
+      color: #e6e0d6;
+      font-size: max(11px, 0.72rem);
+      line-height: 1.35;
+      user-select: text;
+    }
+
+    #credits a {
+      color: #ffd27a;
+      pointer-events: auto;
+    }
+
+    .clipboard-fallback {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 2em;
+      height: 2em;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      font-size: 16px;
+    }
+  </style>
+
+  <!-- three.js r160+ is ESM-only. The engine reads the global window.THREE. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.min.js"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three'
+    window.THREE = {...THREE}
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js"></script>
+  <!-- File name must stay xr.js: the binary finds itself by that suffix. data-preload-chunks pulls in SLAM. -->
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
+  <script src="app.js"></script>
+</head>
+<body>
+  <canvas id="camerafeed"></canvas>
+
+  <div id="overlay">
+    <div id="statusBar">
+      <p id="trackingStatus">INITIALIZING</p>
+      <p id="cameraHeight">— m / — in</p>
+    </div>
+    <p id="instructionText">Move the phone slowly for a few seconds until tracking is NORMAL</p>
+
+    <div id="readout">
+      <div id="resultPrimary">
+        <span id="resultInches"></span>
+        <span id="resultCentimeters"></span>
+      </div>
+      <p id="resultSecondary"></p>
+      <div id="controls">
+        <button type="button" id="resetButton">Reset</button>
+        <button type="button" id="recenterButton">Recenter</button>
+        <button type="button" id="logButton">Save to list</button>
+        <button type="button" id="copyResultsButton">Copy results</button>
+      </div>
+      <details id="measurementList">
+        <summary id="measurementSummary">Session list (0)</summary>
+        <div id="measurementRows"></div>
+      </details>
+    </div>
+
+    <footer id="credits">Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a> · XRExtras and three.js are MIT licensed.</footer>
+    <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
+  </div>
+</body>
+</html>
