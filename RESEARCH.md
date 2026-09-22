@@ -75,3 +75,30 @@ which satisfies the stricter reading in BRIEF.md. A copy of the LICENSE text is 
   deltas and judge at both ±0.5 in and ±1 in.
 - Scale needs a few seconds of deliberate phone motion after start; measuring before `NORMAL` will be wrong.
 - Low-texture floors (plain carpet, glossy tile) degrade tracking. Note the floor type per door in the protocol.
+
+## Reference method (credit card)
+
+A second tab, `reference.html`, measures from a still photo using a US credit card as the scale reference. No 8th Wall engine or SLAM is loaded on that page.
+
+### ISO/IEC 7810 ID-1
+
+A US credit card is **85.60 mm × 53.98 mm**, corner radius **3.18 mm**. Because the corners are rounded, detection fits the four **edges** as lines (`Canny` pixels in a 4 px band, excluding the 8 % nearest each end, then `cv.fitLine`) and intersects those lines to recover the virtual sharp corners. Corner pixels themselves are not a stable feature.
+
+### Homography
+
+Once the four virtual corners are known, they are ordered top-left, top-right, bottom-right, bottom-left (angle about the centroid). The long pair of opposite edges is identified by average pixel length, and `cv.getPerspectiveTransform` (exactly 4 points) maps image pixels onto the ISO rectangle in millimetres — either 85.60 × 53.98 or 53.98 × 85.60. A standalone 4-point DLT (`solveHomography`) is the fallback if `cv` is missing. Two taps are mapped through that homography; the Euclidean distance in the card's plane is the measurement.
+
+- **Floor mode:** card flat on the floor at the threshold; taps at the two jamb bases (door width).
+- **Wall mode:** card held flat against the wall; taps at the floor line and a height mark (for example floor to handrail).
+
+Everything is a still-image, planar-homography measurement: no SLAM, so no scale drift from the engine's camera-height estimate.
+
+### Error budget
+
+With a full-resolution frame and the card at chest height over the floor, the card spans ~150–250 px. A 1 px edge-fit error is ~0.5 % of scale → ~0.2 in on a 36 in door. Finger taps are the larger error, so the UI uses a 3× loupe and 28 px draggable handles. The page warns when the card's long edge is under 120 px.
+
+Vision library: OpenCV.js (Apache-2.0) from `https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js`. Capture draws the live video frame onto an offscreen canvas at intrinsic size (no downscale) and measures on that image.
+
+### Why this tab exists (SLAM field test)
+
+A taped **32.0 in** door read **21.1 in** on the SLAM tab, with the engine's camera-height estimate at **0.81 m** (it wandered 0.47–1.76 m across the session). Scale drift is confirmed. That is not viable at the ±0.5 in success line, which is why this still-image planar method exists as a second measurement.

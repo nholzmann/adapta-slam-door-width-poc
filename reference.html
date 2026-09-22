@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Reference Door-Width POC</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      color: #f4f1ea;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+    }
+
+    #tabBar {
+      display: flex;
+      flex: 0 0 44px;
+      height: 44px;
+      pointer-events: auto;
+      background: rgba(8, 10, 12, 0.88);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #tabBar a {
+      flex: 1 1 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #efe6d4;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    #tabBar a[aria-current="page"] {
+      color: #f4f1ea;
+      background: rgba(255, 210, 122, 0.16);
+      box-shadow: inset 0 -3px 0 #ffd27a;
+    }
+
+    #modeToggle {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 3px;
+      margin: 0.45rem 0.75rem 0;
+      padding: 3px;
+      background: rgba(8, 10, 12, 0.62);
+      border-radius: 999px;
+    }
+
+    #modeToggle button {
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 44px;
+      padding: 0 0.55rem;
+      background: transparent;
+      color: #efe6d4;
+      font-size: 0.82rem;
+    }
+
+    #modeToggle button[aria-pressed="true"] {
+      background: #f4f1ea;
+      color: #1a1714;
+    }
+
+    #statusStrip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem 0.75rem;
+      margin: 0.4rem 0.75rem 0;
+      padding: 0.45rem 0.7rem;
+      background: rgba(8, 10, 12, 0.72);
+      font-size: 0.85rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #visionStatus,
+    #cameraResolution,
+    #levelReadout,
+    #instructionText,
+    #measurementSummary,
+    #diagnosticsSummary,
+    #resultCentimeters,
+    #resultMeta {
+      margin: 0;
+    }
+
+    #levelReadout {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .level-badge {
+      display: inline-block;
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      background: rgba(255, 176, 32, 0.2);
+      color: #ffb020;
+      font-weight: 700;
+      font-size: 0.75rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .level-badge.is-level {
+      background: rgba(61, 220, 110, 0.18);
+      color: #3ddc6e;
+    }
+
+    #enableLevelButton {
+      min-height: 36px;
+      padding: 0 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    #instructionText {
+      margin: 0.45rem 0.75rem 0;
+      padding: 0.55rem 0.7rem;
+      background: rgba(8, 10, 12, 0.62);
+      border-radius: 8px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+
+    #instructionText.is-flashing {
+      animation: instruction-flash 0.35s ease-in-out 3;
+    }
+
+    @keyframes instruction-flash {
+      50% { background: #8a4b00; }
+    }
+
+    #stage {
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 10rem;
+      margin: 0.45rem 0.75rem 0;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+    }
+
+    #preview,
+    #still,
+    #marks {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    #preview,
+    #still {
+      object-fit: contain;
+      background: #000;
+    }
+
+    #still {
+      display: none;
+    }
+
+    #stage.is-still #preview {
+      display: none;
+    }
+
+    #stage.is-still #still {
+      display: block;
+    }
+
+    #marks {
+      pointer-events: none;
+    }
+
+    #readout {
+      flex: 0 1 auto;
+      max-height: 42vh;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0.75rem 0.75rem 0.35rem;
+      background: linear-gradient(transparent, rgba(8, 10, 12, 0.78) 18%);
+    }
+
+    #resultInches {
+      display: block;
+      font-size: clamp(3rem, 14vw, 4.4rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 0.95;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #resultInches:empty,
+    #resultCentimeters:empty,
+    #resultMeta:empty {
+      display: none;
+    }
+
+    #resultCentimeters {
+      display: block;
+      margin-top: 0.2rem;
+      font-size: 1.2rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #resultMeta {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.95rem;
+      color: #efe6d4;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 0.35rem;
+      margin-top: 0.75rem;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      background: #f4f1ea;
+      color: #1a1714;
+      font: 600 0.9rem/1.1 inherit;
+      padding: 0 0.4rem;
+      min-height: 52px;
+    }
+
+    #controls button {
+      display: flex;
+      flex: 1 1 0;
+      flex-wrap: wrap;
+      align-items: center;
+      align-content: center;
+      justify-content: center;
+      min-width: 0;
+      text-align: center;
+    }
+
+    /* A <br> is its own flex item. Full-width and zero height stacks the two
+       label lines without inserting a blank line between them. */
+    #controls button br {
+      flex-basis: 100%;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+    }
+
+    #measurementList,
+    #diagnosticsList {
+      margin-top: 0.5rem;
+      background: rgba(8, 10, 12, 0.55);
+      border-radius: 8px;
+      font-size: 0.85rem;
+      line-height: 1.35;
+      user-select: text;
+    }
+
+    #measurementSummary,
+    #diagnosticsSummary {
+      padding: 0.5rem 0.65rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    #measurementRows {
+      max-height: 26vh;
+      overflow: auto;
+    }
+
+    .measurement-row,
+    .measurement-empty {
+      margin: 0;
+      padding: 0.4rem 0.65rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #credits {
+      padding: 0.4rem 0.75rem 0.55rem;
+      background: rgba(8, 10, 12, 0.88);
+      color: #e6e0d6;
+      font-size: max(11px, 0.72rem);
+      line-height: 1.35;
+      user-select: text;
+    }
+
+    /* The phone has no console we can read. Closed until the tester opens it. */
+    #diagnosticsPanel {
+      max-height: 30vh;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      margin: 0;
+      padding: 0.4rem 0.65rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+      color: #d7d2c8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      user-select: text;
+      overflow-wrap: anywhere;
+    }
+
+    .diagnostic-row {
+      margin: 0;
+    }
+
+    .clipboard-fallback {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 2em;
+      height: 2em;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      font-size: 16px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js" async></script>
+  <script src="reference.js" defer></script>
+</head>
+<body>
+  <nav id="tabBar">
+    <a href="index.html">SLAM</a>
+    <a href="reference.html" aria-current="page">Reference</a>
+  </nav>
+
+  <div id="modeToggle" role="group" aria-label="Measurement mode">
+    <button type="button" id="floorModeButton" aria-pressed="true">Floor (door width)</button>
+    <button type="button" id="wallModeButton" aria-pressed="false">Wall (height)</button>
+  </div>
+
+  <div id="statusStrip">
+    <p id="visionStatus">Loading vision library…</p>
+    <p id="cameraResolution">Camera: —</p>
+    <p id="levelReadout">
+      <span id="levelAngles">β — · γ —</span>
+      <span id="levelBadge" class="level-badge">level</span>
+    </p>
+    <button type="button" id="enableLevelButton" hidden>Enable level</button>
+  </div>
+
+  <p id="instructionText">Put the card flat on the floor in the middle of the doorway (Floor) or flat against the wall at the height you are measuring (Wall). Hold the phone parallel to that surface until the level badge is green, then Capture.</p>
+
+  <div id="stage">
+    <video id="preview" playsinline webkit-playsinline muted autoplay></video>
+    <canvas id="still"></canvas>
+    <canvas id="marks"></canvas>
+  </div>
+
+  <div id="readout">
+    <div id="resultPrimary">
+      <span id="resultInches"></span>
+      <span id="resultCentimeters"></span>
+      <span id="resultMeta"></span>
+    </div>
+    <div id="controls">
+      <button type="button" id="captureButton" disabled>Capture</button>
+      <button type="button" id="resetPointsButton">Reset<br>points</button>
+      <button type="button" id="logButton">Save<br>to list</button>
+      <button type="button" id="copyResultsButton">Copy<br>results</button>
+    </div>
+    <details id="measurementList">
+      <summary id="measurementSummary">Session list (0)</summary>
+      <div id="measurementRows"></div>
+    </details>
+    <details id="diagnosticsList">
+      <summary id="diagnosticsSummary">Debug log (0)</summary>
+      <div id="diagnosticsPanel"></div>
+    </details>
+  </div>
+
+  <footer id="credits">Uses OpenCV.js (Apache-2.0). No 8th Wall engine is loaded on this page.</footer>
+  <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
+</body>
+</html>

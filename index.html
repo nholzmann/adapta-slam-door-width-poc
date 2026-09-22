@@ -39,6 +39,34 @@
       user-select: none;
     }
 
+    /* Always tappable so testers can leave SLAM without waiting for the
+       camera. 44 px at the top stays clear of the XRExtras start button. */
+    #tabBar {
+      display: flex;
+      flex: 0 0 44px;
+      height: 44px;
+      pointer-events: auto;
+      background: rgba(8, 10, 12, 0.88);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #tabBar a {
+      flex: 1 1 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #efe6d4;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    #tabBar a[aria-current="page"] {
+      color: #f4f1ea;
+      background: rgba(255, 210, 122, 0.16);
+      box-shadow: inset 0 -3px 0 #ffd27a;
+    }
+
     #statusBar {
       display: flex;
       justify-content: space-between;
@@ -332,6 +360,10 @@
   <canvas id="camerafeed"></canvas>
 
   <div id="overlay">
+    <nav id="tabBar">
+      <a href="index.html" aria-current="page">SLAM</a>
+      <a href="reference.html">Reference</a>
+    </nav>
     <div id="statusBar">
       <p id="trackingStatus">Starting…</p>
       <p id="cameraHeight">— m / — in</p>
