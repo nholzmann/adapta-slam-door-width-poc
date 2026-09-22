@@ -26,9 +26,13 @@ Measure at least five doors if you can, including doors around 32 to 36 inches.
 ## Start a reading
 
 1. Open the page and point the **back** camera at the floor in front of the door.
-2. Move the phone **slowly** for a few seconds over a floor that has some texture (wood grain, tile grout, a rug pattern). A plain carpet or a shiny floor makes tracking worse. Note that later.
-3. Wait until the top-left word is **NORMAL** and the text is green. If it says INITIALIZING, LIMITED, or NOT_AVAILABLE, keep moving slowly. Do not tap yet. Words after the status (for example EXCESSIVE_MOTION) mean the phone wants you to slow down or show it more texture.
-4. Look at the top-right number, like `1.32 m / 52.0 in`. That is how high the phone thinks it is above the floor. It should look like the height of the phone in your hand, roughly 1.1–1.6 m (about 43–63 in). If NORMAL is green but the height is nonsense (a few inches, or up near the ceiling), tap **Recenter**, then move the phone slowly again until both look right.
+2. Point the camera at a textured floor about a meter in front of you, then slowly push the phone forward about a foot and pull it back, two or three times, keeping the floor in view. The on-screen animation shows the motion. The animation disappears and the status turns green **NORMAL** when scale is found. A floor with some texture (wood grain, tile grout, a rug pattern) works better. A plain carpet or a shiny floor makes tracking worse. Note the floor type and the lighting later.
+3. Wait until the top-left word is **NORMAL** and the text is green. If it says INITIALIZING, LIMITED, or NOT_AVAILABLE, push the phone forward and pull it back again. Do not tap yet. Words after the status (for example EXCESSIVE_MOTION) mean the phone wants you to slow down or show it more texture.
+4. Look at the top-right number, like `1.32 m / 52.0 in`. That is how high the phone thinks it is above the floor. It should look like the height of the phone in your hand, roughly 1.1–1.6 m (about 43–63 in). If NORMAL is green but the height is nonsense (a few inches, or up near the ceiling), tap **Recenter**, then push the phone forward and pull it back again until both look right.
+
+## If nothing shows on screen
+
+Tap **Debug**. Read the last lines of the panel. Send a screenshot of that panel to the person collecting results.
 
 ## Mark the door
 
