@@ -21,6 +21,7 @@ Follow [TEST-PROTOCOL.md](TEST-PROTOCOL.md) on the phone's own browser
 the door first, then take three readings and paste Copy results into your notes.
 Needs Safari on iOS 16.4 or newer, or Chrome 89 or newer on Android.
 The Debug log drop-down logs startup and tracking on the phone. The coaching overlay is MIT-licensed from 8th Wall.
+Taps are refused until the status reads scale stable, and a per-session phone-height calibration (cleared on reload) keeps raw and corrected widths side by side.
 
 Engine attribution: the page loads the 8th Wall engine binary from jsDelivr under
 its limited-use license. Copyright © 2026 Niantic Spatial, Inc. All rights reserved.

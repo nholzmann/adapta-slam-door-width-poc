@@ -7,6 +7,14 @@ const FLASH_HOLD_MS = 1100
 const MESSAGE_HOLD_MS = 1700
 const DIAGNOSTIC_CAP = 60
 const FRAME_LOG_INTERVAL = 300
+// Floor width scales with camera height. NORMAL can still be drifting, so taps
+// wait until height has held inside this band for the whole window.
+const STABILITY_WINDOW_MS = 8000
+const STABILITY_TOLERANCE_M = 0.05
+// A camera under 30 cm is not a hand-held height, so it is not settled scale.
+const STABILITY_MIN_Y_M = 0.3
+const CALIBRATION_MIN_INCHES = 12
+const CALIBRATION_MAX_INCHES = 80
 
 const WAIT_INSTRUCTION = 'Point at the floor, then push the phone forward and pull it back until tracking is NORMAL'
 const LEFT_INSTRUCTION = 'Tap where the LEFT jamb meets the floor'
@@ -15,9 +23,12 @@ const RESULT_INSTRUCTION = 'Result is on screen. Save to list, or tap the floor 
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
 const BROWSER_TOO_OLD_INSTRUCTION = 'This browser is too old for the prototype. Use Safari on iOS 16.4 or newer, or Chrome on Android.'
 const NOT_NORMAL_INSTRUCTION = 'Tracking must be NORMAL before you tap. Push the phone forward and pull it back.'
+const SCALE_SETTLING_INSTRUCTION = 'Hold on — scale is still settling. Keep the floor in view and move the phone forward and back.'
 const MISS_INSTRUCTION = 'Tap on the floor, not the wall'
 const NEED_BOTH_INSTRUCTION = 'Place both jamb points before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
+const CALIBRATION_RANGE_INSTRUCTION = 'Enter the tape-measured phone height in inches (12–80)'
+const CALIBRATION_WAIT_INSTRUCTION = 'Wait for scale stable before calibrating'
 
 const els = {}
 const measurements = []
@@ -46,6 +57,12 @@ let listenersBound = false
 let loggingDiagnostic = false
 let frameCount = 0
 let loggedFirstUpdate = false
+const heightHistory = []
+let scaleStable = false
+let heightSpanMs = 0
+// Session only. Reset does not clear this; recenter keeps the ratio because
+// it is a tape measure, not a map point. A reload drops it (no persistence).
+let calibration = null
 
 let pointA = null
 let pointB = null
@@ -63,7 +80,11 @@ function cacheElements() {
   els.instructionText = document.getElementById('instructionText')
   els.resultInches = document.getElementById('resultInches')
   els.resultCentimeters = document.getElementById('resultCentimeters')
+  els.resultRaw = document.getElementById('resultRaw')
   els.resultSecondary = document.getElementById('resultSecondary')
+  els.calibrationSummary = document.getElementById('calibrationSummary')
+  els.actualHeightInput = document.getElementById('actualHeightInput')
+  els.applyCalibrationButton = document.getElementById('applyCalibrationButton')
   els.resetButton = document.getElementById('resetButton')
   els.recenterButton = document.getElementById('recenterButton')
   els.logButton = document.getElementById('logButton')
@@ -142,6 +163,8 @@ function instructionForState() {
   if (cameraDenied) return CAMERA_DENIED_INSTRUCTION
   if (currentReading) return RESULT_INSTRUCTION
   if (trackingStatus !== 'NORMAL') return WAIT_INSTRUCTION
+  // Green NORMAL is not enough: a moving scale still stretches the floor width.
+  if (!scaleStable) return SCALE_SETTLING_INSTRUCTION
   if (!pointA) return LEFT_INSTRUCTION
   return RIGHT_INSTRUCTION
 }
@@ -164,33 +187,56 @@ function showTemporaryInstruction(text, holdMs) {
   instructionHoldUntil = performance.now() + holdMs
 }
 
+function settlingSecondsRemaining() {
+  const remainingMs = STABILITY_WINDOW_MS - heightSpanMs
+  if (remainingMs <= 0) return 0
+  return Math.ceil(remainingMs / 1000)
+}
+
 function statusLabel() {
   if (!trackingStatus) return 'NO STATUS YET'
-  if (trackingStatus !== 'NORMAL' && trackingReason) {
-    return `${trackingStatus} — ${trackingReason}`
+  if (trackingStatus === 'NORMAL') {
+    if (scaleStable) return 'NORMAL · scale stable'
+    return `NORMAL · scale settling (${settlingSecondsRemaining()}s)`
   }
+  if (trackingReason) return `${trackingStatus} — ${trackingReason}`
   return trackingStatus
 }
 
 function renderTrackingReadout() {
   const label = statusLabel()
   if (els.trackingStatus.textContent !== label) els.trackingStatus.textContent = label
-  els.trackingStatus.classList.toggle('is-normal', trackingStatus === 'NORMAL')
+  // Amber until the window is actually steady. NORMAL alone stays unsettled.
+  els.trackingStatus.classList.toggle('is-normal', scaleStable)
   els.cameraHeight.textContent = camera ? formatHeight(camera.position.y) : '— m / — in'
   renderInstruction()
 }
 
 function renderResult(reading) {
-  els.resultInches.textContent = `${inchesFromMeters(reading.floorMeters).toFixed(1)} in`
-  els.resultCentimeters.textContent = `(${(reading.floorMeters * 100).toFixed(1)} cm)`
-  els.resultSecondary.textContent = reading.featureMeters == null
-    ? 'feature hit: none'
-    : `feature hit: ${inchesFromMeters(reading.featureMeters).toFixed(1)} in`
+  const showCorrected = reading.correctedFloorMeters != null
+  const displayMeters = showCorrected ? reading.correctedFloorMeters : reading.floorMeters
+  els.resultInches.textContent = `${inchesFromMeters(displayMeters).toFixed(1)} in`
+  els.resultCentimeters.textContent = `(${(displayMeters * 100).toFixed(1)} cm)`
+  if (showCorrected) {
+    els.resultRaw.textContent = `raw ${inchesFromMeters(reading.floorMeters).toFixed(1)} in · ratio ${reading.ratio.toFixed(2)}`
+  } else {
+    els.resultRaw.textContent = `uncalibrated · est. height ${reading.cameraHeightMeters.toFixed(2)} m`
+  }
+  if (reading.featureMeters == null) {
+    els.resultSecondary.textContent = 'feature hit: none'
+  } else if (reading.correctedFeatureMeters != null) {
+    const correctedIn = inchesFromMeters(reading.correctedFeatureMeters).toFixed(1)
+    const rawIn = inchesFromMeters(reading.featureMeters).toFixed(1)
+    els.resultSecondary.textContent = `feature hit: ${correctedIn} in (raw ${rawIn})`
+  } else {
+    els.resultSecondary.textContent = `feature hit: ${inchesFromMeters(reading.featureMeters).toFixed(1)} in`
+  }
 }
 
 function clearResultText() {
   els.resultInches.textContent = ''
   els.resultCentimeters.textContent = ''
+  els.resultRaw.textContent = ''
   els.resultSecondary.textContent = ''
 }
 
@@ -221,9 +267,12 @@ function clearMeasurement() {
 
 function recenterTracking() {
   // recenter() rebuilds the world origin. Markers from the old origin would
-  // look like drift, so the points are cleared with the map.
+  // look like drift, so the points are cleared with the map. The height
+  // history is the old map's scale and has to start over. Calibration stays.
   XR8.XrController.recenter()
+  clearScaleHistory()
   clearMeasurement()
+  if (els.trackingStatus) renderTrackingReadout()
 }
 
 function placeSphere(position) {
@@ -264,11 +313,21 @@ function nearestFeatureHit(normX, normY) {
 
 function finishMeasurement() {
   measureLine = placeLine(pointA, pointB)
+  const floorMeters = pointA.distanceTo(pointB)
   const featureMeters = (featureA && featureB) ? featureA.distanceTo(featureB) : null
+  // Raw distances stay raw. The ratio is a snapshot of this tap, so a later
+  // Apply does not rewrite a width that was already taken.
+  const ratio = calibration ? calibration.ratio : null
+  const actualHeightMeters = calibration ? calibration.actualHeightMeters : null
   currentReading = {
-    floorMeters: pointA.distanceTo(pointB),
+    floorMeters,
     featureMeters,
+    correctedFloorMeters: ratio == null ? null : floorMeters * ratio,
+    correctedFeatureMeters: (ratio == null || featureMeters == null) ? null : featureMeters * ratio,
+    ratio,
+    actualHeightMeters,
     cameraHeightMeters: camera.position.y,
+    scaleStableAtTap: scaleStable,
     tracking: trackingStatus,
   }
   renderResult(currentReading)
@@ -278,6 +337,10 @@ function handleFloorTap(clientX, clientY) {
   if (cameraDenied || !camera || !raycaster) return
   if (trackingStatus !== 'NORMAL') {
     showTemporaryInstruction(NOT_NORMAL_INSTRUCTION, FLASH_HOLD_MS)
+    return
+  }
+  if (!scaleStable) {
+    showTemporaryInstruction(SCALE_SETTLING_INSTRUCTION, FLASH_HOLD_MS)
     return
   }
 
@@ -321,6 +384,13 @@ function handleFloorTap(clientX, clientY) {
 }
 
 function onTouchStart(event) {
+  // A tap meant to dismiss the height keyboard must not also place a jamb.
+  if (els.actualHeightInput && document.activeElement === els.actualHeightInput) {
+    els.actualHeightInput.blur()
+    event.preventDefault()
+    return
+  }
+
   // Keep the browser from turning the tap into a scroll or a double-tap zoom.
   event.preventDefault()
 
@@ -348,9 +418,23 @@ function onTouchMove(event) {
   event.preventDefault()
 }
 
+function floorCell(reading) {
+  const raw = inchesFromMeters(reading.floorMeters).toFixed(1)
+  if (reading.correctedFloorMeters == null) return `${raw} in`
+  const corrected = inchesFromMeters(reading.correctedFloorMeters).toFixed(1)
+  return `${raw} → ${corrected} in`
+}
+
 function featureCell(reading) {
   if (reading.featureMeters == null) return '—'
-  return `${inchesFromMeters(reading.featureMeters).toFixed(1)} in`
+  const raw = inchesFromMeters(reading.featureMeters).toFixed(1)
+  if (reading.correctedFeatureMeters == null) return `${raw} in`
+  const corrected = inchesFromMeters(reading.correctedFeatureMeters).toFixed(1)
+  return `${raw} → ${corrected} in`
+}
+
+function stableCell(reading) {
+  return reading.scaleStableAtTap ? 'y' : 'n'
 }
 
 function renderList() {
@@ -368,23 +452,44 @@ function renderList() {
     const reading = measurements[i]
     const row = document.createElement('div')
     row.className = 'measurement-row'
-    row.textContent = `${i + 1} · floor ${inchesFromMeters(reading.floorMeters).toFixed(1)} in · feature ${featureCell(reading)} · height ${inchesFromMeters(reading.cameraHeightMeters).toFixed(1)} in · ${reading.tracking}`
+    row.textContent = `${i + 1} · floor ${floorCell(reading)} · feature ${featureCell(reading)} · height ${inchesFromMeters(reading.cameraHeightMeters).toFixed(1)} in · stable ${stableCell(reading)} · ${reading.tracking}`
     els.measurementRows.append(row)
   }
 }
 
+function tsvInches(meters) {
+  if (meters == null || !Number.isFinite(meters)) return 'none'
+  return inchesFromMeters(meters).toFixed(1)
+}
+
+function tsvRatio(ratio) {
+  if (ratio == null || !Number.isFinite(ratio)) return 'none'
+  return ratio.toFixed(2)
+}
+
 function buildTsv() {
-  const lines = ['n\tfloor_in\tfeature_in\tcamera_height_in\ttracking']
+  const lines = [[
+    'n',
+    'raw_floor_in',
+    'corrected_floor_in',
+    'ratio',
+    'feature_in',
+    'est_height_in',
+    'actual_height_in',
+    'stable',
+    'tracking',
+  ].join('\t')]
   for (let i = 0; i < measurements.length; i++) {
     const reading = measurements[i]
-    const feature = reading.featureMeters == null
-      ? 'none'
-      : inchesFromMeters(reading.featureMeters).toFixed(1)
     lines.push([
       String(i + 1),
-      inchesFromMeters(reading.floorMeters).toFixed(1),
-      feature,
-      inchesFromMeters(reading.cameraHeightMeters).toFixed(1),
+      tsvInches(reading.floorMeters),
+      tsvInches(reading.correctedFloorMeters),
+      tsvRatio(reading.ratio),
+      tsvInches(reading.featureMeters),
+      tsvInches(reading.cameraHeightMeters),
+      tsvInches(reading.actualHeightMeters),
+      stableCell(reading),
       reading.tracking,
     ].join('\t'))
   }
@@ -439,7 +544,12 @@ function saveReading() {
   measurements.push({
     floorMeters: currentReading.floorMeters,
     featureMeters: currentReading.featureMeters,
+    correctedFloorMeters: currentReading.correctedFloorMeters,
+    correctedFeatureMeters: currentReading.correctedFeatureMeters,
+    ratio: currentReading.ratio,
+    actualHeightMeters: currentReading.actualHeightMeters,
     cameraHeightMeters: currentReading.cameraHeightMeters,
+    scaleStableAtTap: currentReading.scaleStableAtTap,
     tracking: currentReading.tracking,
   })
   renderList()
@@ -458,11 +568,127 @@ function bindControls() {
   els.recenterButton.addEventListener('click', () => recenterTracking())
   els.logButton.addEventListener('click', () => saveReading())
   els.copyResultsButton.addEventListener('click', () => copyResults())
+  els.applyCalibrationButton.addEventListener('click', () => applyCalibration())
+  // The keyboard covers Apply. Enter from the field runs the same action.
+  els.actualHeightInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+    applyCalibration()
+  })
 }
 
 function cameraYText() {
   if (!camera || !camera.position || typeof camera.position.y !== 'number') return '—'
   return camera.position.y.toFixed(2)
+}
+
+function scanHeightHistory() {
+  const count = heightHistory.length
+  if (count === 0) return {span: 0, range: 0, stable: false}
+  let minY = heightHistory[0].y
+  let maxY = minY
+  for (let i = 1; i < count; i++) {
+    const y = heightHistory[i].y
+    if (y < minY) minY = y
+    if (y > maxY) maxY = y
+  }
+  const span = heightHistory[count - 1].t - heightHistory[0].t
+  const range = maxY - minY
+  const stable = trackingStatus === 'NORMAL'
+    && span >= STABILITY_WINDOW_MS
+    && range <= STABILITY_TOLERANCE_M
+    && minY >= STABILITY_MIN_Y_M
+  return {span, range, stable}
+}
+
+function pruneHeightHistory(now) {
+  // Drop samples only once the next one still reaches back across the full
+  // window. Cutting at the cutoff leaves the span a frame short of 8000 ms.
+  const cutoff = now - STABILITY_WINDOW_MS
+  let drop = 0
+  while (drop + 1 < heightHistory.length && heightHistory[drop + 1].t <= cutoff) {
+    drop += 1
+  }
+  if (drop > 0) heightHistory.splice(0, drop)
+}
+
+function noteScaleTransition(wasStable, rangeMeters) {
+  if (!wasStable && scaleStable) {
+    logDiagnostic(`scale stable at camY=${cameraYText()}`)
+  } else if (wasStable && !scaleStable) {
+    logDiagnostic(`scale unstable (range=${rangeMeters.toFixed(3)} m)`)
+  }
+}
+
+function updateScaleStability(now) {
+  const wasStable = scaleStable
+  if (
+    trackingStatus !== 'NORMAL'
+    || !camera
+    || typeof camera.position.y !== 'number'
+    || !Number.isFinite(camera.position.y)
+  ) {
+    // A LIMITED frame must restart the 8 s wait, not leave the old samples.
+    const rangeMeters = scanHeightHistory().range
+    heightHistory.length = 0
+    heightSpanMs = 0
+    scaleStable = false
+    noteScaleTransition(wasStable, rangeMeters)
+    return
+  }
+
+  heightHistory.push({t: now, y: camera.position.y})
+  pruneHeightHistory(now)
+  const stats = scanHeightHistory()
+  heightSpanMs = stats.span
+  scaleStable = stats.stable
+  noteScaleTransition(wasStable, stats.range)
+}
+
+function clearScaleHistory() {
+  const wasStable = scaleStable
+  const rangeMeters = scanHeightHistory().range
+  heightHistory.length = 0
+  heightSpanMs = 0
+  scaleStable = false
+  noteScaleTransition(wasStable, rangeMeters)
+}
+
+function renderCalibrationSummary() {
+  if (!els.calibrationSummary) return
+  if (!calibration) {
+    els.calibrationSummary.textContent = 'Calibration: none'
+    return
+  }
+  const ratio = calibration.ratio.toFixed(2)
+  const estimated = calibration.estimatedHeightMeters.toFixed(2)
+  const actual = calibration.actualHeightMeters.toFixed(2)
+  els.calibrationSummary.textContent = `Calibration: ratio ${ratio} (est ${estimated} m, actual ${actual} m)`
+}
+
+function applyCalibration() {
+  const inches = els.actualHeightInput.valueAsNumber
+  if (!Number.isFinite(inches) || inches < CALIBRATION_MIN_INCHES || inches > CALIBRATION_MAX_INCHES) {
+    showTemporaryInstruction(CALIBRATION_RANGE_INSTRUCTION, MESSAGE_HOLD_MS)
+    return
+  }
+  if (!scaleStable || !camera || !Number.isFinite(camera.position.y) || camera.position.y <= 0) {
+    showTemporaryInstruction(CALIBRATION_WAIT_INSTRUCTION, MESSAGE_HOLD_MS)
+    return
+  }
+  const actualHeightMeters = inches / INCHES_PER_METER
+  const estimatedHeightMeters = camera.position.y
+  const ratio = actualHeightMeters / estimatedHeightMeters
+  calibration = {
+    actualHeightMeters,
+    estimatedHeightMeters,
+    ratio,
+    appliedAt: performance.now(),
+  }
+  logDiagnostic(
+    `calibration applied: ratio=${ratio.toFixed(2)} est=${estimatedHeightMeters.toFixed(2)} actual=${actualHeightMeters.toFixed(2)}`
+  )
+  renderCalibrationSummary()
 }
 
 function errorMessage(error) {
@@ -565,11 +791,13 @@ function doorWidthPipelineModule() {
         }
       }
 
+      const now = performance.now()
+      updateScaleStability(now)
+
       if (frameCount % FRAME_LOG_INTERVAL === 0) {
-        logDiagnostic(`frames=${frameCount} status=${trackingStatus} camY=${cameraYText()}`)
+        logDiagnostic(`frames=${frameCount} status=${trackingStatus} camY=${cameraYText()} stable=${scaleStable ? 'y' : 'n'}`)
       }
 
-      const now = performance.now()
       if (now - lastDomWriteMs < DOM_WRITE_INTERVAL_MS) return
       lastDomWriteMs = now
       renderTrackingReadout()
