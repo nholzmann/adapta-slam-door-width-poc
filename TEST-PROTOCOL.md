@@ -32,7 +32,7 @@ Measure at least five doors if you can, including doors around 32 to 36 inches.
 
 ## If nothing shows on screen
 
-Tap **Debug**. Read the last lines of the panel. Send a screenshot of that panel to the person collecting results.
+Open the **Debug log** drop-down at the bottom. Read the last lines of the panel. Send a screenshot of that panel to the person collecting results.
 
 ## Mark the door
 

@@ -43,7 +43,6 @@ let copyLabelTimer = 0
 let saveLabelTimer = 0
 let controlsBound = false
 let listenersBound = false
-let diagnosticsToggleBound = false
 let loggingDiagnostic = false
 let frameCount = 0
 let loggedFirstUpdate = false
@@ -73,7 +72,7 @@ function cacheElements() {
   els.measurementRows = document.getElementById('measurementRows')
   els.clipboardFallback = document.getElementById('clipboardFallback')
   els.diagnosticsPanel = document.getElementById('diagnosticsPanel')
-  els.diagnosticsToggle = document.getElementById('diagnosticsToggle')
+  els.diagnosticsSummary = document.getElementById('diagnosticsSummary')
   renderDiagnostics()
 }
 
@@ -95,6 +94,9 @@ function logDiagnostic(text) {
 function renderDiagnostics() {
   const panel = els.diagnosticsPanel
   if (!panel) return
+  if (els.diagnosticsSummary) {
+    els.diagnosticsSummary.textContent = `Debug log (${diagnosticLines.length})`
+  }
   const rows = []
   for (let i = 0; i < diagnosticLines.length; i++) {
     const row = document.createElement('div')
@@ -104,14 +106,6 @@ function renderDiagnostics() {
   }
   panel.replaceChildren(...rows)
   panel.scrollTop = panel.scrollHeight
-}
-
-function bindDiagnosticsToggle() {
-  if (diagnosticsToggleBound || !els.diagnosticsToggle || !els.diagnosticsPanel) return
-  diagnosticsToggleBound = true
-  els.diagnosticsToggle.addEventListener('click', () => {
-    els.diagnosticsPanel.hidden = !els.diagnosticsPanel.hidden
-  })
 }
 
 // Loading-layer taps must pass through until the camera runs.
@@ -398,10 +392,11 @@ function buildTsv() {
 }
 
 function markCopied() {
-  els.copyResultsButton.textContent = 'Copied'
+  // Static labels only. Diagnostic and user text stay on textContent.
+  els.copyResultsButton.innerHTML = 'Copied'
   clearTimeout(copyLabelTimer)
   copyLabelTimer = setTimeout(() => {
-    els.copyResultsButton.textContent = 'Copy results'
+    els.copyResultsButton.innerHTML = 'Copy<br>results'
   }, 1500)
 }
 
@@ -448,10 +443,10 @@ function saveReading() {
     tracking: currentReading.tracking,
   })
   renderList()
-  els.logButton.textContent = 'Saved'
+  els.logButton.innerHTML = 'Saved'
   clearTimeout(saveLabelTimer)
   saveLabelTimer = setTimeout(() => {
-    els.logButton.textContent = 'Save to list'
+    els.logButton.innerHTML = 'Save<br>to list'
   }, 1200)
   showTemporaryInstruction('Saved. Press Reset before the next reading.', MESSAGE_HOLD_MS)
 }
@@ -463,7 +458,6 @@ function bindControls() {
   els.recenterButton.addEventListener('click', () => recenterTracking())
   els.logButton.addEventListener('click', () => saveReading())
   els.copyResultsButton.addEventListener('click', () => copyResults())
-  bindDiagnosticsToggle()
 }
 
 function cameraYText() {
@@ -680,13 +674,11 @@ function onDomReady() {
   // Pipeline callbacks can run as soon as the engine starts. Cache the nodes
   // before that, not only on window load.
   cacheElements()
-  bindDiagnosticsToggle()
   logDiagnostic('DOMContentLoaded')
 }
 
 function onWindowLoad() {
   cacheElements()
-  bindDiagnosticsToggle()
   logDiagnostic('window load')
   if (window.XRExtras) {
     logDiagnostic('XRExtras already present')
