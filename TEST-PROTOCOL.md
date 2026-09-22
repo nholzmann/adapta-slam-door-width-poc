@@ -76,13 +76,15 @@ Copy this into your notes. One row per door. Leave the pass/fail judgment to the
 
 If the ratio is similar across doors and sessions, the bias is constant and calibration may make the method viable. If the ratio wanders, the method is not viable.
 
-| door | actual_in | reading1 | reading2 | reading3 | mean | delta_from_actual | raw_reading1 | raw_reading2 | raw_reading3 | raw_mean | raw_delta | ratio | est_height_in | phone model + OS | floor type | tracking felt stable (y/n) | notes |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+`method` is **SLAM** or **Reference**. Use the SLAM columns (`raw_*`, `ratio`, `est_height_in`, tracking) for SLAM rows. For Reference rows, put the three still-photo inches in `reading1` / `reading2` / `reading3`, leave the raw/ratio/height/tracking cells blank or `n/a`, and write `card_long_px` plus level y/n in notes.
+
+| door | method | actual_in | reading1 | reading2 | reading3 | mean | delta_from_actual | raw_reading1 | raw_reading2 | raw_reading3 | raw_mean | raw_delta | ratio | est_height_in | phone model + OS | floor type | tracking felt stable (y/n) | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 
 ## Paste the copied results
 
@@ -96,3 +98,41 @@ n	raw_floor_in	corrected_floor_in	ratio	feature_in	est_height_in	actual_height_i
 Empty values say `none`. `feature_in` is the raw feature-hit inches. `stable` is `y` or `n`. If you had not calibrated, `corrected_floor_in`, `ratio`, and `actual_height_in` say `none`. The list is only in the phone's memory. Closing the tab clears it. The paste is the record.
 
 The on-page list shows the same readings. When that reading was calibrated, the floor cell shows raw → corrected. Feature inches there are `—` when there was no feature hit. Height is the estimated camera height in inches at the moment the second jamb was tapped. `stable` is `y` or `n`. Tracking is the status word at that moment.
+
+## Reference tab
+
+This tab does not use SLAM. It takes a still photo, finds a US credit card in the picture as the scale, then converts two taps through the card's plane into inches. Use it on the same doors as the SLAM tab so the two methods can be compared. Open **Reference** at the top of the page (full navigation; the camera from SLAM is released).
+
+Needs a physical **credit card, debit card, or other ISO ID-1 card** (the common US wallet card, 85.60 mm × 53.98 mm). A business card or a phone is the wrong size.
+
+### Floor mode (door width)
+
+1. Tape-measure the door first, the same way as the SLAM section.
+2. Put the card **flat on the floor in the middle of the threshold**, long edge roughly parallel to the door.
+3. Choose **Floor (door width)** if it is not already selected. Mode cannot be changed after Capture.
+4. Hold the phone **parallel to the floor at chest height**, camera looking down at the card and both jambs. On iPhone, tap **Enable level** if that button is showing, then allow motion.
+5. Wait until the level badge is **green**, then tap **Capture**.
+6. Tap the card. Check that the yellow quad sits on the four edges (the handles are the virtual sharp corners, slightly outside the rounded plastic). Drag with the loupe if needed, then tap **Confirm card**. If it says the card is small, Retake closer.
+7. Tap point A at the **left jamb at the floor**, then point B at the **right jamb at the floor**. Drag the dots if the tap landed off the jamb.
+8. Tap **Save to list**. Repeat for **three** captures per door (Retake between them, not only Reset points). Reset points keeps the card and clears A/B; Retake takes a new photo.
+
+### Wall mode (one per tester)
+
+Do this once per person, not once per door.
+
+1. Tape-measure a known height (floor to a handrail, or floor to a piece of tape).
+2. Hold the card **flat against the wall** at that height (or anywhere on the wall in the same plane).
+3. Switch to **Wall (height)** *before* Capture. Hold the phone upright in portrait, camera facing the wall, until the level badge is green, then Capture.
+4. Tap the card, confirm the corners, tap point A on the **floor line**, tap point B at the **top of the handrail or tape**.
+5. Save to list. Write `method = Reference` and `Wall` in notes.
+
+### Copy results (Reference)
+
+The Reference **Copy results** paste is tab-separated and looks like this:
+
+```
+n	mode	inches	cm	card_long_px	image_w	image_h	beta	gamma	level	detect
+1	floor	36.1	91.7	214	3840	2160	1.2	-0.4	y	auto
+```
+
+`detect` is `auto` if the card was found and the corners were not dragged more than 3 px, otherwise `manual`. `level` is `y` or `n` at the moment of Capture. The list is only in the phone's memory. Closing the tab clears it.
