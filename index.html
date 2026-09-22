@@ -13,30 +13,30 @@
       touch-action: none;
     }
 
-    /* FullWindowCanvas resizes the drawing buffer; this keeps the element full-bleed before it runs. */
+    /* FullWindowCanvas resizes the drawing buffer and does not set z-index.
+       z-index 0 keeps the feed under the overlay. */
     #camerafeed {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
       display: block;
+      z-index: 0;
       touch-action: none;
     }
 
-    /* Taps fall through to the camera canvas except on controls, the list, and the license link. */
+    /* Taps fall through, including to the loading-layer button, until .is-live.
+       z-index 900 sits above the XRExtras loading layer (800) so the status line stays visible. */
     #overlay {
-      display: none;
+      display: flex;
       position: absolute;
       inset: 0;
+      z-index: 900;
       flex-direction: column;
       pointer-events: none;
       color: #f4f1ea;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       user-select: none;
-    }
-
-    #overlay.is-ready {
-      display: flex;
     }
 
     #statusBar {
@@ -128,7 +128,6 @@
       flex-wrap: wrap;
       gap: 0.4rem;
       margin-top: 0.75rem;
-      pointer-events: auto;
     }
 
     button {
@@ -152,7 +151,6 @@
       border-radius: 8px;
       font-size: 0.85rem;
       line-height: 1.35;
-      pointer-events: auto;
       user-select: text;
     }
 
@@ -185,7 +183,35 @@
 
     #credits a {
       color: #ffd27a;
+    }
+
+    /* Loading-layer taps must pass through until the camera runs. */
+    #overlay.is-live #controls,
+    #overlay.is-live #measurementList,
+    #overlay.is-live #diagnosticsPanel,
+    #overlay.is-live #credits a {
       pointer-events: auto;
+    }
+
+    /* Shown by default for this test. The phone has no console we can read. */
+    #diagnosticsPanel {
+      min-height: 0;
+      flex: 0 1 auto;
+      max-height: 30vh;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0.4rem 0.75rem;
+      background: rgba(8, 10, 12, 0.82);
+      color: #d7d2c8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      user-select: text;
+      overflow-wrap: anywhere;
+    }
+
+    .diagnostic-row {
+      margin: 0;
     }
 
     .clipboard-fallback {
@@ -216,6 +242,8 @@
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js"></script>
+  <!-- MIT coaching overlay: animated forward/back prompt until tracking is NORMAL. -->
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/coaching-overlay@1/dist/coaching-overlay.js" crossorigin="anonymous"></script>
   <!-- File name must stay xr.js: the binary finds itself by that suffix. data-preload-chunks pulls in SLAM. -->
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
   <script src="app.js"></script>
@@ -225,10 +253,10 @@
 
   <div id="overlay">
     <div id="statusBar">
-      <p id="trackingStatus">INITIALIZING</p>
+      <p id="trackingStatus">Starting…</p>
       <p id="cameraHeight">— m / — in</p>
     </div>
-    <p id="instructionText">Move the phone slowly for a few seconds until tracking is NORMAL</p>
+    <p id="instructionText">Point at the floor, then push the phone forward and pull it back until tracking is NORMAL</p>
 
     <div id="readout">
       <div id="resultPrimary">
@@ -241,6 +269,7 @@
         <button type="button" id="recenterButton">Recenter</button>
         <button type="button" id="logButton">Save to list</button>
         <button type="button" id="copyResultsButton">Copy results</button>
+        <button type="button" id="diagnosticsToggle">Debug</button>
       </div>
       <details id="measurementList">
         <summary id="measurementSummary">Session list (0)</summary>
@@ -248,7 +277,9 @@
       </details>
     </div>
 
-    <footer id="credits">Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a> · XRExtras and three.js are MIT licensed.</footer>
+    <div id="diagnosticsPanel"></div>
+
+    <footer id="credits">Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a> · XRExtras, the coaching overlay and three.js are MIT licensed.</footer>
     <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
   </div>
 </body>

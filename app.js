@@ -5,20 +5,23 @@ const DOM_WRITE_INTERVAL_MS = 200
 const SINGLE_TAP_DELAY_MS = 80
 const FLASH_HOLD_MS = 1100
 const MESSAGE_HOLD_MS = 1700
+const DIAGNOSTIC_CAP = 60
+const FRAME_LOG_INTERVAL = 300
 
-const WAIT_INSTRUCTION = 'Move the phone slowly for a few seconds until tracking is NORMAL'
+const WAIT_INSTRUCTION = 'Point at the floor, then push the phone forward and pull it back until tracking is NORMAL'
 const LEFT_INSTRUCTION = 'Tap where the LEFT jamb meets the floor'
 const RIGHT_INSTRUCTION = 'Tap where the RIGHT jamb meets the floor'
 const RESULT_INSTRUCTION = 'Result is on screen. Save to list, or tap the floor to measure again.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
 const BROWSER_TOO_OLD_INSTRUCTION = 'This browser is too old for the prototype. Use Safari on iOS 16.4 or newer, or Chrome on Android.'
-const NOT_NORMAL_INSTRUCTION = 'Tracking must be NORMAL before you tap. Move the phone slowly.'
+const NOT_NORMAL_INSTRUCTION = 'Tracking must be NORMAL before you tap. Push the phone forward and pull it back.'
 const MISS_INSTRUCTION = 'Tap on the floor, not the wall'
 const NEED_BOTH_INSTRUCTION = 'Place both jamb points before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
 
 const els = {}
 const measurements = []
+const diagnosticLines = []
 
 let scene = null
 let camera = null
@@ -29,7 +32,7 @@ let markerGeometry = null
 let markerMaterial = null
 let lineMaterial = null
 
-let trackingStatus = 'INITIALIZING'
+let trackingStatus = ''
 let trackingReason = ''
 let cameraDenied = false
 let browserTooOld = false
@@ -40,6 +43,10 @@ let copyLabelTimer = 0
 let saveLabelTimer = 0
 let controlsBound = false
 let listenersBound = false
+let diagnosticsToggleBound = false
+let loggingDiagnostic = false
+let frameCount = 0
+let loggedFirstUpdate = false
 
 let pointA = null
 let pointB = null
@@ -65,10 +72,52 @@ function cacheElements() {
   els.measurementSummary = document.getElementById('measurementSummary')
   els.measurementRows = document.getElementById('measurementRows')
   els.clipboardFallback = document.getElementById('clipboardFallback')
+  els.diagnosticsPanel = document.getElementById('diagnosticsPanel')
+  els.diagnosticsToggle = document.getElementById('diagnosticsToggle')
+  renderDiagnostics()
 }
 
-function showOverlay() {
-  els.overlay.classList.add('is-ready')
+function logDiagnostic(text) {
+  const seconds = (performance.now() / 1000).toFixed(1)
+  diagnosticLines.push(`[+${seconds}s] ${text}`)
+  if (diagnosticLines.length > DIAGNOSTIC_CAP) diagnosticLines.shift()
+  // Rendering the log touches the DOM. A throw there would re-enter the
+  // window error listener, which logs by calling this again.
+  if (loggingDiagnostic) return
+  loggingDiagnostic = true
+  try {
+    renderDiagnostics()
+  } finally {
+    loggingDiagnostic = false
+  }
+}
+
+function renderDiagnostics() {
+  const panel = els.diagnosticsPanel
+  if (!panel) return
+  const rows = []
+  for (let i = 0; i < diagnosticLines.length; i++) {
+    const row = document.createElement('div')
+    row.className = 'diagnostic-row'
+    row.textContent = diagnosticLines[i]
+    rows.push(row)
+  }
+  panel.replaceChildren(...rows)
+  panel.scrollTop = panel.scrollHeight
+}
+
+function bindDiagnosticsToggle() {
+  if (diagnosticsToggleBound || !els.diagnosticsToggle || !els.diagnosticsPanel) return
+  diagnosticsToggleBound = true
+  els.diagnosticsToggle.addEventListener('click', () => {
+    els.diagnosticsPanel.hidden = !els.diagnosticsPanel.hidden
+  })
+}
+
+// Loading-layer taps must pass through until the camera runs.
+function markOverlayLive() {
+  const overlay = document.getElementById('overlay')
+  if (overlay) overlay.classList.add('is-live')
 }
 
 function explainBrowserTooOld() {
@@ -77,13 +126,13 @@ function explainBrowserTooOld() {
   const overlay = document.getElementById('overlay')
   const instruction = document.getElementById('instructionText')
   if (!overlay || !instruction) return
+  markOverlayLive()
   instruction.classList.remove('is-flashing')
   instruction.textContent = BROWSER_TOO_OLD_INSTRUCTION
   // The XRExtras loading layer is z-index 800 and stays up if XR8.run never
   // starts. Lift the overlay so this line is what the tester actually sees.
   overlay.style.zIndex = '2000'
   overlay.style.background = '#101118'
-  overlay.classList.add('is-ready')
 }
 
 function inchesFromMeters(meters) {
@@ -122,6 +171,7 @@ function showTemporaryInstruction(text, holdMs) {
 }
 
 function statusLabel() {
+  if (!trackingStatus) return 'NO STATUS YET'
   if (trackingStatus !== 'NORMAL' && trackingReason) {
     return `${trackingStatus} — ${trackingReason}`
   }
@@ -132,7 +182,7 @@ function renderTrackingReadout() {
   const label = statusLabel()
   if (els.trackingStatus.textContent !== label) els.trackingStatus.textContent = label
   els.trackingStatus.classList.toggle('is-normal', trackingStatus === 'NORMAL')
-  if (camera) els.cameraHeight.textContent = formatHeight(camera.position.y)
+  els.cameraHeight.textContent = camera ? formatHeight(camera.position.y) : '— m / — in'
   renderInstruction()
 }
 
@@ -413,54 +463,116 @@ function bindControls() {
   els.recenterButton.addEventListener('click', () => recenterTracking())
   els.logButton.addEventListener('click', () => saveReading())
   els.copyResultsButton.addEventListener('click', () => copyResults())
+  bindDiagnosticsToggle()
+}
+
+function cameraYText() {
+  if (!camera || !camera.position || typeof camera.position.y !== 'number') return '—'
+  return camera.position.y.toFixed(2)
+}
+
+function errorMessage(error) {
+  if (error && typeof error.message === 'string' && error.message) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return String(error)
+  } catch (err) {
+    return 'unknown'
+  }
 }
 
 function doorWidthPipelineModule() {
   return {
     name: 'door-width',
 
+    onBeforeRun: () => {
+      logDiagnostic('onBeforeRun')
+    },
+
+    onAttach: () => {
+      logDiagnostic('onAttach')
+    },
+
+    onDetach: () => {
+      logDiagnostic('onDetach')
+    },
+
+    // Do not rethrow: a throw here would skip later modules' onException handlers.
+    onException: (error) => {
+      logDiagnostic(`onException: ${errorMessage(error)}`)
+    },
+
     onStart: ({canvas}) => {
-      // renderer is created by XR8.Threejs. FullWindowCanvas resizes it; we only
-      // add objects and read the camera pose back.
-      const {scene: nextScene, camera: nextCamera, renderer} = XR8.Threejs.xrScene()
-      scene = nextScene
-      camera = nextCamera
-      void renderer
+      markOverlayLive()
+      logDiagnostic('onStart entered')
+      frameCount = 0
+      loggedFirstUpdate = false
+      try {
+        // renderer is created by XR8.Threejs. FullWindowCanvas resizes it; we only
+        // add objects and read the camera pose back.
+        const {scene: nextScene, camera: nextCamera, renderer} = XR8.Threejs.xrScene()
+        scene = nextScene
+        camera = nextCamera
+        void renderer
+        logDiagnostic(`onStart: xrScene ok (camera y=${cameraYText()})`)
 
-      // Markers are unlit. The light keeps the scene from being black if the
-      // pipeline composites any lit content of its own.
-      scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 2))
+        // Markers are unlit. The light keeps the scene from being black if the
+        // pipeline composites any lit content of its own.
+        scene.add(new THREE.HemisphereLight(0xffffff, 0x222222, 2))
 
-      markerGeometry = new THREE.SphereGeometry(0.015, 20, 16)
-      markerMaterial = new THREE.MeshBasicMaterial({color: 0x39f3ff})
-      lineMaterial = new THREE.LineBasicMaterial({color: 0xffe14a})
+        markerGeometry = new THREE.SphereGeometry(0.015, 20, 16)
+        markerMaterial = new THREE.MeshBasicMaterial({color: 0x39f3ff})
+        lineMaterial = new THREE.LineBasicMaterial({color: 0xffe14a})
 
-      // 1.4 m is a hand-held guess above the y = 0 floor. Absolute scale
-      // replaces this once SLAM has estimated the ground; camera y is then meters.
-      camera.position.set(0, 1.4, 0)
-      XR8.XrController.updateCameraProjectionMatrix({
-        origin: camera.position,
-        facing: camera.quaternion,
-      })
+        // 1.4 m is a hand-held guess above the y = 0 floor. Absolute scale
+        // replaces this once SLAM has estimated the ground; camera y is then meters.
+        camera.position.set(0, 1.4, 0)
+        XR8.XrController.updateCameraProjectionMatrix({
+          origin: camera.position,
+          facing: camera.quaternion,
+        })
 
-      const feed = canvas || document.getElementById('camerafeed')
-      if (!listenersBound) {
-        listenersBound = true
-        feed.addEventListener('touchstart', onTouchStart, {capture: true, passive: false})
-        feed.addEventListener('touchmove', onTouchMove, {passive: false})
+        const feed = canvas || document.getElementById('camerafeed')
+        if (!listenersBound) {
+          listenersBound = true
+          feed.addEventListener('touchstart', onTouchStart, {capture: true, passive: false})
+          feed.addEventListener('touchmove', onTouchMove, {passive: false})
+        }
+
+        bindControls()
+        renderList()
+        renderTrackingReadout()
+      } catch (err) {
+        logDiagnostic(`onStart: ${errorMessage(err)}`)
+        throw err
+      } finally {
+        logDiagnostic('onStart done')
       }
-
-      bindControls()
-      renderList()
-      showOverlay()
-      renderTrackingReadout()
     },
 
     onUpdate: ({processCpuResult}) => {
+      frameCount += 1
+      // No remote console on the phone. Record the reality payload shape once.
+      if (!loggedFirstUpdate) {
+        loggedFirstUpdate = true
+        const realityObject = (processCpuResult && processCpuResult.reality) || {}
+        const resultObject = processCpuResult || {}
+        logDiagnostic(`first onUpdate; reality keys: ${Object.keys(realityObject).join(',')}; result keys: ${Object.keys(resultObject).join(',')}`)
+      }
+
       const reality = processCpuResult && processCpuResult.reality
       if (reality) {
+        const previousStatus = trackingStatus
+        const previousReason = trackingReason
         if (typeof reality.trackingStatus === 'string') trackingStatus = reality.trackingStatus
         trackingReason = typeof reality.trackingReason === 'string' ? reality.trackingReason : ''
+        if (trackingStatus !== previousStatus || trackingReason !== previousReason) {
+          logDiagnostic(`tracking: ${trackingStatus} (${trackingReason})`)
+        }
+      }
+
+      if (frameCount % FRAME_LOG_INTERVAL === 0) {
+        logDiagnostic(`frames=${frameCount} status=${trackingStatus} camY=${cameraYText()}`)
       }
 
       const now = performance.now()
@@ -469,10 +581,11 @@ function doorWidthPipelineModule() {
       renderTrackingReadout()
     },
 
-    onCameraStatusChange: ({status}) => {
+    onCameraStatusChange: ({status, reason}) => {
+      logDiagnostic(`onCameraStatusChange: ${status} (${reason})`)
       if (status !== 'failed') return
+      markOverlayLive()
       cameraDenied = true
-      showOverlay()
       instructionHoldUntil = 0
       if (els.instructionText) {
         els.instructionText.classList.remove('is-flashing')
@@ -483,12 +596,18 @@ function doorWidthPipelineModule() {
 }
 
 const onxrloaded = () => {
+  logDiagnostic('xrloaded / onxrloaded entered')
   // Import maps (and therefore three.js) are absent on older Safari/Chrome.
   // Touching THREE here used to throw and leave the loading screen up.
   if (window.THREE === undefined) {
+    logDiagnostic('THREE missing')
     explainBrowserTooOld()
     return
   }
+  logDiagnostic(`THREE r${THREE.REVISION}`)
+
+  if (typeof XR8.version !== 'undefined') logDiagnostic(`XR8 version ${XR8.version}`)
+  else logDiagnostic('XR8 version undefined')
 
   // r152+ color-manages hex materials and would shift the marker colors.
   // The placeground sample turns this off so the authored colors stay put.
@@ -501,10 +620,12 @@ const onxrloaded = () => {
   // 'absolute' is meters. The default 'responsive' scale is not metric, so a
   // door width would not be real inches. Required before the controller module.
   XR8.XrController.configure({scale: 'absolute'})
+  logDiagnostic('XrController.configure scale=absolute ok')
 
   // Order matches the placeground sample. Ours is last so onStart runs after
-  // XR8.Threejs has created the scene.
-  XR8.addCameraPipelineModules([
+  // XR8.Threejs has created the scene. Coaching is after RuntimeError so its
+  // prompt is installed before our module reads tracking.
+  const modules = [
     XR8.GlTextureRenderer.pipelineModule(),
     XR8.Threejs.pipelineModule(),
     XR8.XrController.pipelineModule(),
@@ -512,27 +633,77 @@ const onxrloaded = () => {
     XRExtras.FullWindowCanvas.pipelineModule(),
     XRExtras.Loading.pipelineModule(),
     XRExtras.RuntimeError.pipelineModule(),
-    doorWidthPipelineModule(),
-  ])
+  ]
+  if (window.CoachingOverlay) {
+    // Absolute scale needs a forward/back translation. The overlay shows that
+    // motion until tracking is NORMAL, then hides itself.
+    CoachingOverlay.configure({
+      promptText: 'To find scale, push the phone forward and pull it back',
+      promptColor: '#ffffff',
+      animationColor: '#39f3ff',
+    })
+    modules.push(CoachingOverlay.pipelineModule())
+  } else {
+    logDiagnostic('CoachingOverlay missing')
+  }
+  modules.push(doorWidthPipelineModule())
+  XR8.addCameraPipelineModules(modules)
 
   // Opens the back camera and starts SLAM. SLAM is back-camera only.
   XR8.run({canvas: document.getElementById('camerafeed')})
+  logDiagnostic('XR8.run called')
 }
 
 // The three.js import is an inline module. If it fails, window.THREE stays unset.
 // Resource errors from xr.js or xrextras have a src or filename; leave those alone.
 window.addEventListener('error', (event) => {
+  const message = event && typeof event.message === 'string' ? event.message : ''
+  const filename = typeof event.filename === 'string' ? event.filename : ''
+  const lineno = event && event.lineno != null ? event.lineno : ''
+  logDiagnostic(`error: ${message} @ ${filename}:${lineno}`)
+
   if (window.THREE !== undefined) return
   const target = event.target
   if (target && target !== window && target.src) return
-  const filename = typeof event.filename === 'string' ? event.filename : ''
   if (/xr\.js|xrextras/.test(filename)) return
   explainBrowserTooOld()
 }, true)
 
+window.addEventListener('unhandledrejection', (event) => {
+  logDiagnostic(`unhandledrejection: ${errorMessage(event && event.reason)}`)
+})
+
 // Loading.showLoading paints the startup screen and, on iOS, the motion-permission tap.
 const load = () => { XRExtras.Loading.showLoading({onxrloaded}) }
-window.onload = () => {
+
+function onDomReady() {
+  // Pipeline callbacks can run as soon as the engine starts. Cache the nodes
+  // before that, not only on window load.
   cacheElements()
-  window.XRExtras ? load() : window.addEventListener('xrextrasloaded', load)
+  bindDiagnosticsToggle()
+  logDiagnostic('DOMContentLoaded')
 }
+
+function onWindowLoad() {
+  cacheElements()
+  bindDiagnosticsToggle()
+  logDiagnostic('window load')
+  if (window.XRExtras) {
+    logDiagnostic('XRExtras already present')
+    load()
+  } else {
+    window.addEventListener('xrextrasloaded', () => {
+      logDiagnostic('xrextrasloaded seen')
+      load()
+    })
+  }
+}
+
+logDiagnostic('app.js loaded')
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', onDomReady)
+} else {
+  onDomReady()
+}
+// addEventListener, not window.onload, so a later assignment cannot drop this handler.
+window.addEventListener('load', onWindowLoad)
