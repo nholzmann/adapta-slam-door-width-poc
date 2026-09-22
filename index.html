@@ -54,6 +54,7 @@
     #cameraHeight,
     #instructionText,
     #resultSecondary,
+    #calibrationSummary,
     #measurementSummary,
     #diagnosticsSummary {
       margin: 0;
@@ -107,6 +108,7 @@
 
     #resultInches:empty,
     #resultCentimeters:empty,
+    #resultRaw:empty,
     #resultSecondary:empty {
       display: none;
     }
@@ -115,6 +117,14 @@
       display: block;
       margin-top: 0.2rem;
       font-size: 1.2rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #resultRaw {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.95rem;
+      color: #efe6d4;
       font-variant-numeric: tabular-nums;
     }
 
@@ -166,6 +176,7 @@
       transform: translateY(1px);
     }
 
+    #calibrationPanel,
     #measurementList,
     #diagnosticsList {
       margin-top: 0.5rem;
@@ -176,11 +187,57 @@
       user-select: text;
     }
 
+    /* The page disables panning so floor taps do not scroll. This field still
+       has to take a tap and open the keyboard. */
+    #calibrationPanel {
+      touch-action: manipulation;
+    }
+
+    #calibrationSummary,
     #measurementSummary,
     #diagnosticsSummary {
       padding: 0.5rem 0.65rem;
       font-weight: 600;
       cursor: pointer;
+    }
+
+    #calibrationFields {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.45rem 0.65rem 0.35rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #calibrationFields label {
+      flex: 1 0 100%;
+      font-weight: 600;
+    }
+
+    #actualHeightInput {
+      box-sizing: border-box;
+      flex: 1 1 6rem;
+      min-width: 0;
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 0.6rem;
+      background: #f4f1ea;
+      color: #1a1714;
+      font: 600 1rem/1.2 inherit;
+    }
+
+    #applyCalibrationButton {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 0 0.9rem;
+    }
+
+    #calibrationHint {
+      margin: 0;
+      padding: 0 0.65rem 0.55rem;
+      color: #e6e0d4;
     }
 
     #measurementRows {
@@ -210,6 +267,7 @@
 
     /* Loading-layer taps must pass through until the camera runs. */
     #overlay.is-live #controls,
+    #overlay.is-live #calibrationPanel,
     #overlay.is-live #measurementList,
     #overlay.is-live #diagnosticsList,
     #overlay.is-live #credits a {
@@ -284,6 +342,7 @@
       <div id="resultPrimary">
         <span id="resultInches"></span>
         <span id="resultCentimeters"></span>
+        <span id="resultRaw"></span>
       </div>
       <p id="resultSecondary"></p>
       <div id="controls">
@@ -292,6 +351,15 @@
         <button type="button" id="logButton">Save<br>to list</button>
         <button type="button" id="copyResultsButton">Copy<br>results</button>
       </div>
+      <details id="calibrationPanel">
+        <summary id="calibrationSummary">Calibration: none</summary>
+        <div id="calibrationFields">
+          <label for="actualHeightInput">Actual phone height (in)</label>
+          <input id="actualHeightInput" type="number" inputmode="decimal" step="0.1" min="12" max="80" enterkeyhint="done" autocomplete="off">
+          <button type="button" id="applyCalibrationButton">Apply</button>
+        </div>
+        <p id="calibrationHint">A reload clears this.</p>
+      </details>
       <details id="measurementList">
         <summary id="measurementSummary">Session list (0)</summary>
         <div id="measurementRows"></div>
