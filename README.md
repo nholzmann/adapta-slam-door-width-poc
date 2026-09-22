@@ -9,8 +9,17 @@ useful, on a phone with no app install and no LiDAR?
 - `index.html` / `app.js` — the prototype (built by Grok Build, supervised from Claude Code).
 - `TEST-PROTOCOL.md` — how testers measure real doors and record results.
 
-Live page (GitHub Pages, served from `main`): see the repo's Pages URL in the
-repository settings. HTTPS is required for camera access on phones.
+Live page (GitHub Pages, served from `main`):
+https://nholzmann.github.io/adapta-slam-door-width-poc/
+
+HTTPS is required for camera access on phones.
+
+## How to test
+
+Follow [TEST-PROTOCOL.md](TEST-PROTOCOL.md) on the phone's own browser
+(Safari on iPhone, Chrome on Android), not an in-app browser. Tape-measure
+the door first, then take three readings and paste Copy results into your notes.
+Needs Safari on iOS 16.4 or newer, or Chrome 89 or newer on Android.
 
 Engine attribution: the page loads the 8th Wall engine binary from jsDelivr under
 its limited-use license. Copyright © 2026 Niantic Spatial, Inc. All rights reserved.
