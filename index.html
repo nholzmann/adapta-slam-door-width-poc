@@ -25,7 +25,7 @@
       touch-action: none;
     }
 
-    /* Taps fall through to the camera canvas except on controls, the list, the log, and the license link.
+    /* Taps fall through, including to the loading-layer button, until .is-live.
        z-index 900 sits above the XRExtras loading layer (800) so the status line stays visible. */
     #overlay {
       display: flex;
@@ -128,7 +128,6 @@
       flex-wrap: wrap;
       gap: 0.4rem;
       margin-top: 0.75rem;
-      pointer-events: auto;
     }
 
     button {
@@ -152,7 +151,6 @@
       border-radius: 8px;
       font-size: 0.85rem;
       line-height: 1.35;
-      pointer-events: auto;
       user-select: text;
     }
 
@@ -185,6 +183,13 @@
 
     #credits a {
       color: #ffd27a;
+    }
+
+    /* Loading-layer taps must pass through until the camera runs. */
+    #overlay.is-live #controls,
+    #overlay.is-live #measurementList,
+    #overlay.is-live #diagnosticsPanel,
+    #overlay.is-live #credits a {
       pointer-events: auto;
     }
 
@@ -201,7 +206,6 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 0.72rem;
       line-height: 1.35;
-      pointer-events: auto;
       user-select: text;
       overflow-wrap: anywhere;
     }

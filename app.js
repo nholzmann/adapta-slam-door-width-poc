@@ -114,12 +114,19 @@ function bindDiagnosticsToggle() {
   })
 }
 
+// Loading-layer taps must pass through until the camera runs.
+function markOverlayLive() {
+  const overlay = document.getElementById('overlay')
+  if (overlay) overlay.classList.add('is-live')
+}
+
 function explainBrowserTooOld() {
   browserTooOld = true
   instructionHoldUntil = 0
   const overlay = document.getElementById('overlay')
   const instruction = document.getElementById('instructionText')
   if (!overlay || !instruction) return
+  markOverlayLive()
   instruction.classList.remove('is-flashing')
   instruction.textContent = BROWSER_TOO_OLD_INSTRUCTION
   // The XRExtras loading layer is z-index 800 and stays up if XR8.run never
@@ -496,6 +503,7 @@ function doorWidthPipelineModule() {
     },
 
     onStart: ({canvas}) => {
+      markOverlayLive()
       logDiagnostic('onStart entered')
       frameCount = 0
       loggedFirstUpdate = false
@@ -576,6 +584,7 @@ function doorWidthPipelineModule() {
     onCameraStatusChange: ({status, reason}) => {
       logDiagnostic(`onCameraStatusChange: ${status} (${reason})`)
       if (status !== 'failed') return
+      markOverlayLive()
       cameraDenied = true
       instructionHoldUntil = 0
       if (els.instructionText) {
