@@ -1,0 +1,77 @@
+# Research findings — 8th Wall engine binary for door-width measurement
+
+Verified 2026-09-22 against the live npm package, the engine binary itself, and 8thwall.org docs.
+
+## Engine facts (verified)
+
+- **Package:** `@8thwall/engine-binary` 1.0.0 on npm, served by jsDelivr. Files: `dist/xr.js` (1.0 MB core),
+  `dist/xr-slam.js` (5.5 MB SLAM chunk, lazy-loaded), `dist/xr-face.js`, `dist/resources/*`, `dist/LICENSE`.
+- **Load:** one script tag, no build step:
+  `<script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>`
+  The engine fires a `window` event `xrloaded` when `window.XR8` is ready.
+- **No app key.** The binary runs in "standalone mode" (its own error string: "Platform token is not available in
+  standalone mode"). The old `appKey` attribute is read but unused. The 8th Wall hosted platform shut down 2026-02-28.
+- **Script tag naming matters:** the binary locates itself with the regex `/(xrweb|xr\.js)(\?.*)?$/` over `document.scripts`
+  and throws "Missing xrweb script tag" otherwise. Keep the file name `xr.js`.
+- **SLAM is only in the binary.** The MIT open-source `@8thwall/engine` has no SLAM module.
+- **XRExtras** (`@8thwall/xrextras` 1.0.0, MIT) is still published and on jsDelivr:
+  `https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js`. It provides `Loading` (start-up screen, iOS motion
+  permission prompt flow), `AlmostThere` (unsupported-browser hints), `FullWindowCanvas`, `RuntimeError`.
+- **three.js:** `XR8.Threejs.pipelineModule()` expects `window.THREE`. three.js ≥ r160 is ESM-only, so use an import map
+  and assign `window.THREE` (pattern from 8thwall/web `examples/threejs/placeground`). Verified URL:
+  `https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.min.js`.
+
+## API surface we rely on
+
+- `XR8.XrController.configure({scale: 'absolute'})` — MUST be called before `XR8.XrController.pipelineModule()` and
+  `XR8.run()`. `'responsive'` (default) is NOT metric. `'absolute'` returns camera/world positions in **meters**; the
+  camera's y-position becomes its physical height above the detected ground plane once scale is estimated.
+- `XR8.run({canvas})` — opens the back camera and starts the run loop. SLAM is back-camera only. HTTPS required.
+- `XR8.addCameraPipelineModules([...])` — order used by the official example: `GlTextureRenderer`, `Threejs`,
+  `XrController`, XRExtras modules, then the app module.
+- `XR8.XrController.hitTest(x, y, includedTypes)` — x,y in [0,1] from the top-left of the camera feed. Returns
+  `[{type, position:{x,y,z}, rotation:{x,y,z,w}, distance}]`, type ∈ `FEATURE_POINT | ESTIMATED_SURFACE | DETECTED_SURFACE`.
+- `XR8.Threejs.xrScene()` → `{scene, camera, renderer}` after the Threejs module's `onStart`.
+- `XR8.XrController.updateCameraProjectionMatrix({origin, facing})` — set the starting pose in `onStart`.
+- `XR8.XrController.recenter()` — resets tracking (official examples bind it to a two-finger tap).
+- Per-frame `onUpdate({processCpuResult})` exposes `processCpuResult.reality.trackingStatus`
+  (`INITIALIZING | LIMITED | NORMAL | NOT_AVAILABLE`) and `trackingReason` (`INSUFFICIENT_FEATURES | EXCESSIVE_MOTION | ...`).
+- The engine tracks **one dynamic ground plane at y = 0**; there is no vertical-plane detection.
+- `XR8.XrDevice.isDeviceBrowserCompatible()` / `incompatibleReasons()` for device gating.
+
+## License / attribution (required)
+
+Exact notice, from the 8th Wall Attribution Guidelines (https://8thwall.org/docs/open-source):
+
+> Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: https://github.com/8thwall/engine/blob/main/LICENSE
+
+For web projects it may live in `index.html` source, but this spike puts it visibly on the page (about/credits line),
+which satisfies the stricter reading in BRIEF.md. A copy of the LICENSE text is kept in the repo as
+`LICENSE-8thwall-engine.txt` (the license itself, not our code's license).
+
+## Locked implementation decisions
+
+1. **Static site:** `index.html` + `app.js` only. No bundler, no framework, no backend. Hosted on GitHub Pages from `main`.
+2. **Absolute scale** is mandatory. The UI must show whether tracking is `NORMAL` and the estimated camera height
+   (meters and inches) as a live sanity check: if absolute scale is right, the height should look like a real
+   hand-held height (roughly 1.1–1.6 m). Testers record this next to every measurement.
+3. **Measurement method (primary): floor-plane taps.** The user taps where each door jamb meets the floor. Each tap is
+   converted to a ray from the three.js camera and intersected with the ground plane y = 0. The distance between the
+   two points, in meters, ×39.3701 = inches. This is robust because the engine's only detected plane is the floor.
+4. **Measurement method (secondary, displayed smaller):** `XR8.XrController.hitTest(x, y, ['FEATURE_POINT',
+   'ESTIMATED_SURFACE', 'DETECTED_SURFACE'])`, nearest result. Shown as a second number so the test report can compare
+   the two. If no hit is returned, show "no feature hit".
+5. **Markers:** a small sphere at each placed point and a line between them, rendered in the three.js scene so testers
+   can see whether the points stay anchored while the phone moves (drift check).
+6. **Controls:** Reset (clears both points), Recenter (calls `recenter()`), plus a session-only list of measurements
+   taken (in memory, no persistence) with a "Copy results" button that copies the list as tab-separated text.
+7. **Permissions/unsupported browsers:** use XRExtras `Loading`, `AlmostThere`, `FullWindowCanvas`, `RuntimeError`.
+   iOS Safari needs the motion permission tap that `Loading` handles; Android Chrome works with the same code.
+8. **Out of scope:** styling beyond legibility, persistence, auth, Adapta data model, vertical-plane tricks.
+
+## Known risks to watch in testing
+
+- ±0.5 in on a ~36 in door is ~1.4 % error; monocular visual-inertial scale estimation may not reach that. Record raw
+  deltas and judge at both ±0.5 in and ±1 in.
+- Scale needs a few seconds of deliberate phone motion after start; measuring before `NORMAL` will be wrong.
+- Low-texture floors (plain carpet, glossy tile) degrade tracking. Note the floor type per door in the protocol.
