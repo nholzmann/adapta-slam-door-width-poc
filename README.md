@@ -20,7 +20,7 @@ Follow [TEST-PROTOCOL.md](TEST-PROTOCOL.md) on the phone's own browser
 (Safari on iPhone, Chrome on Android), not an in-app browser. Tape-measure
 the door first, then take three readings and paste Copy results into your notes.
 Needs Safari on iOS 16.4 or newer, or Chrome 89 or newer on Android.
-The Debug panel (shown during this test) logs startup and tracking on the phone. The coaching overlay is MIT-licensed from 8th Wall.
+The Debug log drop-down logs startup and tracking on the phone. The coaching overlay is MIT-licensed from 8th Wall.
 
 Engine attribution: the page loads the 8th Wall engine binary from jsDelivr under
 its limited-use license. Copyright © 2026 Niantic Spatial, Inc. All rights reserved.

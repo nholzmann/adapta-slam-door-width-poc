@@ -54,7 +54,8 @@
     #cameraHeight,
     #instructionText,
     #resultSecondary,
-    #measurementSummary {
+    #measurementSummary,
+    #diagnosticsSummary {
       margin: 0;
     }
 
@@ -125,8 +126,8 @@
 
     #controls {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.4rem;
+      flex-wrap: nowrap;
+      gap: 0.35rem;
       margin-top: 0.75rem;
     }
 
@@ -136,16 +137,37 @@
       border-radius: 999px;
       background: #f4f1ea;
       color: #1a1714;
-      font: 600 0.95rem/1.1 inherit;
-      padding: 0.7rem 0.9rem;
-      min-height: 44px;
+      font: 600 0.9rem/1.1 inherit;
+      padding: 0 0.4rem;
+      min-height: 52px;
+    }
+
+    #controls button {
+      display: flex;
+      flex: 1 1 0;
+      flex-wrap: wrap;
+      align-items: center;
+      align-content: center;
+      justify-content: center;
+      min-width: 0;
+      text-align: center;
+    }
+
+    /* A <br> is its own flex item. Full-width and zero height stacks the two
+       label lines without inserting a blank line between them. */
+    #controls button br {
+      flex-basis: 100%;
+      width: 0;
+      height: 0;
+      overflow: hidden;
     }
 
     button:active {
       transform: translateY(1px);
     }
 
-    #measurementList {
+    #measurementList,
+    #diagnosticsList {
       margin-top: 0.5rem;
       background: rgba(8, 10, 12, 0.55);
       border-radius: 8px;
@@ -154,7 +176,8 @@
       user-select: text;
     }
 
-    #measurementSummary {
+    #measurementSummary,
+    #diagnosticsSummary {
       padding: 0.5rem 0.65rem;
       font-weight: 600;
       cursor: pointer;
@@ -188,20 +211,19 @@
     /* Loading-layer taps must pass through until the camera runs. */
     #overlay.is-live #controls,
     #overlay.is-live #measurementList,
-    #overlay.is-live #diagnosticsPanel,
+    #overlay.is-live #diagnosticsList,
     #overlay.is-live #credits a {
       pointer-events: auto;
     }
 
-    /* Shown by default for this test. The phone has no console we can read. */
+    /* The phone has no console we can read. Closed until the tester opens it. */
     #diagnosticsPanel {
-      min-height: 0;
-      flex: 0 1 auto;
       max-height: 30vh;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
-      padding: 0.4rem 0.75rem;
-      background: rgba(8, 10, 12, 0.82);
+      margin: 0;
+      padding: 0.4rem 0.65rem;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
       color: #d7d2c8;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 0.72rem;
@@ -267,17 +289,18 @@
       <div id="controls">
         <button type="button" id="resetButton">Reset</button>
         <button type="button" id="recenterButton">Recenter</button>
-        <button type="button" id="logButton">Save to list</button>
-        <button type="button" id="copyResultsButton">Copy results</button>
-        <button type="button" id="diagnosticsToggle">Debug</button>
+        <button type="button" id="logButton">Save<br>to list</button>
+        <button type="button" id="copyResultsButton">Copy<br>results</button>
       </div>
       <details id="measurementList">
         <summary id="measurementSummary">Session list (0)</summary>
         <div id="measurementRows"></div>
       </details>
+      <details id="diagnosticsList">
+        <summary id="diagnosticsSummary">Debug log (0)</summary>
+        <div id="diagnosticsPanel"></div>
+      </details>
     </div>
-
-    <div id="diagnosticsPanel"></div>
 
     <footer id="credits">Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a> · XRExtras, the coaching overlay and three.js are MIT licensed.</footer>
     <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
