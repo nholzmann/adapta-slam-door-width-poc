@@ -6,6 +6,8 @@ You are checking whether a phone webpage can measure a door as well as a tape me
 
 Live page: https://nholzmann.github.io/adapta-slam-door-width-poc/
 
+Needs Safari on iOS 16.4 or newer, or Chrome 89 or newer on Android.
+
 - iPhone: open that link in **Safari**. Not inside Mail, Messages, Instagram, or Facebook. If you are already in one of those apps, copy the link and paste it into Safari.
 - Android: open that link in **Chrome**. Not an in-app browser.
 - When the phone asks, allow **camera** and **motion**. If you tapped Don't Allow, the page cannot measure. Reload and allow access.

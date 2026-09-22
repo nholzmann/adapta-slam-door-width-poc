@@ -11,6 +11,7 @@ const LEFT_INSTRUCTION = 'Tap where the LEFT jamb meets the floor'
 const RIGHT_INSTRUCTION = 'Tap where the RIGHT jamb meets the floor'
 const RESULT_INSTRUCTION = 'Result is on screen. Save to list, or tap the floor to measure again.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
+const BROWSER_TOO_OLD_INSTRUCTION = 'This browser is too old for the prototype. Use Safari on iOS 16.4 or newer, or Chrome on Android.'
 const NOT_NORMAL_INSTRUCTION = 'Tracking must be NORMAL before you tap. Move the phone slowly.'
 const MISS_INSTRUCTION = 'Tap on the floor, not the wall'
 const NEED_BOTH_INSTRUCTION = 'Place both jamb points before saving.'
@@ -31,6 +32,7 @@ let lineMaterial = null
 let trackingStatus = 'INITIALIZING'
 let trackingReason = ''
 let cameraDenied = false
+let browserTooOld = false
 let lastDomWriteMs = 0
 let instructionHoldUntil = 0
 let singleTapTimer = 0
@@ -69,6 +71,21 @@ function showOverlay() {
   els.overlay.classList.add('is-ready')
 }
 
+function explainBrowserTooOld() {
+  browserTooOld = true
+  instructionHoldUntil = 0
+  const overlay = document.getElementById('overlay')
+  const instruction = document.getElementById('instructionText')
+  if (!overlay || !instruction) return
+  instruction.classList.remove('is-flashing')
+  instruction.textContent = BROWSER_TOO_OLD_INSTRUCTION
+  // The XRExtras loading layer is z-index 800 and stays up if XR8.run never
+  // starts. Lift the overlay so this line is what the tester actually sees.
+  overlay.style.zIndex = '2000'
+  overlay.style.background = '#101118'
+  overlay.classList.add('is-ready')
+}
+
 function inchesFromMeters(meters) {
   return meters * INCHES_PER_METER
 }
@@ -78,6 +95,7 @@ function formatHeight(meters) {
 }
 
 function instructionForState() {
+  if (browserTooOld) return BROWSER_TOO_OLD_INSTRUCTION
   if (cameraDenied) return CAMERA_DENIED_INSTRUCTION
   if (currentReading) return RESULT_INSTRUCTION
   if (trackingStatus !== 'NORMAL') return WAIT_INSTRUCTION
@@ -465,6 +483,13 @@ function doorWidthPipelineModule() {
 }
 
 const onxrloaded = () => {
+  // Import maps (and therefore three.js) are absent on older Safari/Chrome.
+  // Touching THREE here used to throw and leave the loading screen up.
+  if (window.THREE === undefined) {
+    explainBrowserTooOld()
+    return
+  }
+
   // r152+ color-manages hex materials and would shift the marker colors.
   // The placeground sample turns this off so the authored colors stay put.
   if (THREE.ColorManagement) THREE.ColorManagement.enabled = false
@@ -493,6 +518,17 @@ const onxrloaded = () => {
   // Opens the back camera and starts SLAM. SLAM is back-camera only.
   XR8.run({canvas: document.getElementById('camerafeed')})
 }
+
+// The three.js import is an inline module. If it fails, window.THREE stays unset.
+// Resource errors from xr.js or xrextras have a src or filename; leave those alone.
+window.addEventListener('error', (event) => {
+  if (window.THREE !== undefined) return
+  const target = event.target
+  if (target && target !== window && target.src) return
+  const filename = typeof event.filename === 'string' ? event.filename : ''
+  if (/xr\.js|xrextras/.test(filename)) return
+  explainBrowserTooOld()
+}, true)
 
 // Loading.showLoading paints the startup screen and, on iOS, the motion-permission tap.
 const load = () => { XRExtras.Loading.showLoading({onxrloaded}) }
