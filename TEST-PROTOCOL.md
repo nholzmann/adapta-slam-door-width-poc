@@ -157,7 +157,13 @@ Amber lines under the result:
 
 Use this only when you cannot put a reference on both jambs. The reference must lie **on** the line between the two jambs, and bigger is better. Plain paper may lie in either orientation. The page estimates the sheet's true proportions from perspective, so the 11 in edge may point across the door or away from the camera. For Letter, if the meta line shows `aspect` far from 1.29, retake — the sheet's long/short ratio was not recovered. A card a step further from the camera than the taps, and off that line, has read 98 in on a 32 in door. The page learned the perspective from edges only about 35 px tall, and a small edge error stretched across that gap.
 
-After Confirm, place **one point on each jamb**. Press and slide, with the magnifier. The width is not the straight line between those two taps. The sheet's edges are axis-aligned in its own millimetre frame, and the doorway is whichever of those axes the two taps run along. The big number is that component (the perpendicular width). A tap that slides along the jamb changes the raw chord and not the width. If the taps miss the sheet's edge direction by more than 12°, the page warns that the sheet may not be square to the door, or a tap is off the jamb, and it still shows the raw chord.
+After Confirm, place **one point on each jamb**. Press and slide, with the magnifier.
+
+- The sheet may be at any angle to the **camera**, but it must sit **square to the door** (its long edge parallel to the door line).
+- Tap **straight across at the same height**, one point on each jamb, so there is nothing to project. The perpendicular correction is a safety net for a slightly crooked pair of taps, not a way to measure with a diagonal line.
+- The sheet must lie in the **same plane** as the two tapped edges (on the floor for a threshold width; taped to the casing or wall for a height). Any depth offset between the sheet and the tapped edges shifts the reading by roughly the offset divided by the camera distance.
+
+If the taps miss the sheet's edge direction by more than 12°, the page warns that the sheet may not be square to the door, or a tap is off the jamb, and it still shows the raw chord.
 
 ### Floor mode (door width)
 
@@ -171,11 +177,11 @@ After Confirm, place **one point on each jamb**. Press and slide, with the magni
 8. Place two points by press-and-slide, one on each jamb. Press on the left jamb where it meets the floor, keep your finger down, slide until the crosshair sits on the jamb edge, then lift. Do the same on the right jamb. The round magnifier stays above your finger (or below it near the top of the screen), and a faint vertical line shows whether the point is on the jamb edge. A quick tap still leaves the point where the finger landed; sliding is how you line it up. The big number is the perpendicular width along the sheet's axis (`⊥ width`). The smaller raw figure is the straight distance between the two taps, which reads high when those taps are not side by side.
 9. Tap **Save to list**. Repeat for **three** captures per door (Retake between them, not only Reset points). Reset points keeps the reference and clears both points; Retake takes a new photo.
 
-If either jamb's scale is more than 1.3× the scale at the reference, an amber line stays under the result: **Unreliable: reference is far from the points or too small.** Move the reference onto the line between the points, use a larger sheet, or switch to **2 refs**. If the two taps do not run along the sheet's edge direction (more than 12° off), the page says so and shows the raw chord — the sheet may not be square to the door, or a tap is off the jamb.
+If either jamb's scale is more than 1.3× the scale at the reference, an amber line stays under the result: **Unreliable: reference is far from the points or too small.** Move the reference onto the line between the points, use a larger sheet, or switch to **2 refs**. If the two taps do not run along the sheet's edge direction (more than 12° off), the page says so and shows the raw chord — the sheet may not be square to the door, or a tap is off the jamb. That warning is not a licence to tap a diagonal; use the three 1-ref rules above.
 
 ### Wall mode (one per tester)
 
-Do this once per person, not once per door. Prefer **2 refs** (lower reference on the floor line, upper reference on the height mark). In **1 ref**, the same rules apply: any comfortable angle, the reference on the line between the two marks, at least as big as the dashed box, and press-and-slide for one point on each mark. The width is the sheet-axis component, with the same 12° warning.
+Do this once per person, not once per door. Prefer **2 refs** (lower reference on the floor line, upper reference on the height mark). In **1 ref**, the same three rules apply (sheet square to the opening, taps straight across at the same height, sheet in the same plane as the two marks). Get the sheet at least as big as the dashed box, and press-and-slide for one point on each mark. The same 12° warning applies.
 
 1. Tape-measure a known height (floor to a handrail, or floor to a piece of tape).
 2. Hold the card or sheet **flat against the wall** on the line between the floor and the height mark.
