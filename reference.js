@@ -1,7 +1,9 @@
 // Still-image reference measurement, in millimetres. No SLAM.
-// One reference maps two jamb lines through a homography. Two references sit
-// on the jambs; the width is the perpendicular gap between their outer edges.
-// Pure geometry is at the top so Node can require this file without a browser.
+// One reference maps two jamb points through a homography; the width is the
+// component along the sheet's own axis. Two references sit on the jambs; the
+// width is the perpendicular gap between their outer edges, and each card may
+// lie with either edge across the doorway. Pure geometry is at the top so
+// Node can require this file without a browser.
 
 const CARD_LONG_MM = 85.60
 const CARD_SHORT_MM = 53.98
@@ -31,6 +33,9 @@ const FIT_RMS_WARN_MM = 2
 const SCALE_DRIFT_WARN = 0.05
 const LINES_ANGLE_WARN_DEG = 3
 const SCALE_RATIO_WARN = 1.5
+// 1-ref: taps this far off the sheet's edge direction are not a clean
+// perpendicular. The raw chord stays on screen so the tester can compare.
+const AXIS_ANGLE_WARN_DEG = 12
 
 // ratio is long/short. Foreshortening is scored, not tightly gated:
 // accept ratio × 0.6 … ratio × 3 (a steep angle can stretch either axis).
@@ -52,18 +57,13 @@ const LETTER_REF = {
   defaultShortPx: 232,
 }
 
-function formatInchesToken(value) {
-  const rounded = Math.round(Number(value) * 1000) / 1000
-  if (!Number.isFinite(rounded)) return '0'
-  return String(rounded)
-}
-
-// Inches in, millimetres stored. defaultShortPx keeps the manual quad's aspect.
-function customReference(longIn, shortIn) {
+// Inches in, millimetres stored. Named presets keep their own TSV token;
+// a measured page is name 'custom'.
+function sizedReference(name, longIn, shortIn) {
   const longMm = longIn * MM_PER_INCH
   const shortMm = shortIn * MM_PER_INCH
   return {
-    name: 'custom',
+    name,
     longMm,
     shortMm,
     ratio: longMm / shortMm,
@@ -74,26 +74,45 @@ function customReference(longIn, shortIn) {
   }
 }
 
+const LEGAL_REF = sizedReference('legal', 11.75, 8.5)
+const NOTEPAD_REF = sizedReference('notepad', 11.5, 8.5)
+const A4_REF = sizedReference('a4', 11.69, 8.27)
+
+function formatInchesToken(value) {
+  const rounded = Math.round(Number(value) * 1000) / 1000
+  if (!Number.isFinite(rounded)) return '0'
+  return String(rounded)
+}
+
+function customReference(longIn, shortIn) {
+  return sizedReference('custom', longIn, shortIn)
+}
+
 function referenceToken(spec) {
   if (!spec || spec.name === 'card') return 'card'
   if (spec.name === 'letter') return 'letter'
   const longIn = spec.longIn != null ? spec.longIn : spec.longMm / MM_PER_INCH
   const shortIn = spec.shortIn != null ? spec.shortIn : spec.shortMm / MM_PER_INCH
-  return `custom:${formatInchesToken(longIn)}x${formatInchesToken(shortIn)}`
+  const size = `${formatInchesToken(longIn)}x${formatInchesToken(shortIn)}`
+  if (spec.name === 'legal' || spec.name === 'notepad' || spec.name === 'a4') {
+    return `${spec.name}:${size}`
+  }
+  return `custom:${size}`
 }
 
-const FLOOR_LIVE_INSTRUCTION = 'Lay the card (or sheet) on the floor on the line between the jambs. Step back so both jambs and the reference are in view, then Capture.'
-const WALL_LIVE_INSTRUCTION = 'Hold the card flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
+const FLOOR_LIVE_INSTRUCTION = 'Lay a plain sheet of printer paper on the floor on the line between the jambs, long edge along the door. Step back so both jambs and the sheet are in view, then Capture.'
+const WALL_LIVE_INSTRUCTION = 'Hold a plain sheet of printer paper flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
-const NEED_POINTS_INSTRUCTION = 'Place all four points before saving.'
+const NEED_POINTS_INSTRUCTION = 'Place both points before saving.'
 const NEED_REFS_INSTRUCTION = 'Confirm both references before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
 const MODE_LOCKED_INSTRUCTION = 'Mode can only be changed before Capture.'
 const LAYOUT_LOCKED_INSTRUCTION = 'Layout can only be changed before Capture.'
 const REFERENCE_LOCKED_INSTRUCTION = 'Reference can only be changed before Capture.'
-const DISAGREE_WARNING = 'References disagree — check that both lie flat on the same surface with long edges on one line, then Retake.'
-const FLUSH_WARNING = 'Cards are not both flush against the jambs — re-seat them and Retake.'
+const DISAGREE_WARNING = 'References disagree — check that both lie flat on the same surface, then Retake.'
+const FLUSH_WARNING = 'The outer edges are not parallel — re-seat each reference so one edge is flush against the jamb or the mark, then Retake.'
 const SCALE_WARNING = 'Unreliable: reference is far from the points or too small. Put it on the line between the points, or use 2 refs.'
+const AXIS_MISALIGN_WARNING = 'Points do not run along the sheet\'s edge direction — the sheet may not be square to the door, or a tap is off the jamb. Raw chord shown.'
 
 function point(x, y) {
   return {x, y}
@@ -461,6 +480,28 @@ function linesAngleDeg(a1, a2, b1, b2) {
   return Math.acos(cos) * 180 / Math.PI
 }
 
+// Reference edges are axis-aligned in this frame. The doorway is whichever
+// metric axis carries more of B−A; the other component is slide along the
+// jamb. Width is the doorway component, so that slide does not inflate it.
+// Misalignment is the angle between B−A and that axis.
+function sheetAxisSeparationMm(a, b) {
+  if (!a || !b) return null
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null
+  const adx = Math.abs(dx)
+  const ady = Math.abs(dy)
+  const alongX = adx >= ady
+  const along = alongX ? adx : ady
+  const perp = alongX ? ady : adx
+  return {
+    widthMm: along,
+    chordMm: Math.hypot(dx, dy),
+    axisAngleDeg: Math.atan2(perp, along) * 180 / Math.PI,
+    axis: alongX ? 'x' : 'y',
+  }
+}
+
 // Mean of the four endpoint-to-other-line distances. Spread is max − min.
 function perpendicularLinesDistanceMm(a1, a2, b1, b2) {
   if (!a1 || !a2 || !b1 || !b2) return null
@@ -526,9 +567,9 @@ function normalizeVec(x, y) {
 }
 
 // Slots: outerLow, outerHigh, innerLow, innerHigh. The measurement edges are
-// the pair perpendicular to A→B (floor: the short edges on the jambs; wall:
-// the long edges on the floor line and the height mark). Outer is the one
-// farther from the other reference.
+// the pair perpendicular to A→B — the edges that can sit flush on the jambs
+// or the marks. Outer is the one farther from the other reference. Long versus
+// short is not assumed here; the fit tries both.
 function referenceCornerSlots(corners, otherCentroid, doorDir) {
   const ordered = orderCorners(corners)
   const self = centroidOf(ordered)
@@ -581,24 +622,35 @@ function referenceCornerSlots(corners, otherCentroid, doorDir) {
   ]
 }
 
+// 'long-across' / 'short-across': which physical edge spans the doorway.
+// The other edge lies along the jamb. Floor used to assume long-across and
+// wall short-across; a card turned the other way is a different rectangle.
+function orientExtents(spec, orient) {
+  if (orient === 'short-across') return {extentMm: spec.shortMm, acrossMm: spec.longMm}
+  return {extentMm: spec.longMm, acrossMm: spec.shortMm}
+}
+
 // innerSign +1 grows the reference toward +measurement (A). B's inner edge
 // faces A, so its sign is −1 and its outer edge sits at W.
-function slotDestinations(spec, mode, outerM, transverseOrigin, innerSign) {
-  const extent = mode === 'wall' ? spec.shortMm : spec.longMm
-  const across = mode === 'wall' ? spec.longMm : spec.shortMm
-  const innerM = outerM + innerSign * extent
+function slotDestinations(spec, mode, outerM, transverseOrigin, innerSign, orient) {
+  const dims = orientExtents(spec, orient)
+  const innerM = outerM + innerSign * dims.extentMm
   return [
     metricPoint(outerM, transverseOrigin, mode),
-    metricPoint(outerM, transverseOrigin + across, mode),
+    metricPoint(outerM, transverseOrigin + dims.acrossMm, mode),
     metricPoint(innerM, transverseOrigin, mode),
-    metricPoint(innerM, transverseOrigin + across, mode),
+    metricPoint(innerM, transverseOrigin + dims.acrossMm, mode),
   ]
 }
 
-function mappedLongEdgeMm(mapped, mode) {
+// Slots are outerLow, outerHigh, innerLow, innerHigh. The long edge is the
+// outer-to-inner pair when that pair spans the doorway, and the outer pair
+// itself when the long edge lies along the jamb.
+function mappedLongEdgeMm(mapped, orient) {
   const along = (edgeLength(mapped[0], mapped[2]) + edgeLength(mapped[1], mapped[3])) / 2
   const across = (edgeLength(mapped[0], mapped[1]) + edgeLength(mapped[2], mapped[3])) / 2
-  return mode === 'wall' ? across : along
+  if (orient === 'short-across') return across
+  return along
 }
 
 function pixelReprojectionRms(H, srcPts, dstPts) {
@@ -650,32 +702,55 @@ function parabolaMinimum(x1, y1, x2, y2, x3, y3) {
   return vertex
 }
 
-// Two coplanar references of known size. The shared frame cannot be fixed
-// until the gap W is known, so: fit H_A from A's four corners (outer edge at
-// measurement 0), map all eight corners, and read W_est as the perpendicular
-// distance between the outer edges. Scale drift is B's mapped long edge over
-// the true long edge, and the same check from H_B. Destinations are then A's
-// rectangle on [0, extent] and B's on [W − extent, W], with B shifted by the
-// transverse offset seen in A's frame (the long edges need not be collinear).
-// A wrong W is not a homography of the plane: the 8-point pixel residual is
-// unimodal in W, so a downhill bracket re-estimates it and one parabola
-// refits. Two iterations. The reported width is the mean of the four
-// endpoint-to-other-line distances under the final H, not a point chord.
-function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
-  const spec = ref || CARD_REF
-  const which = mode === 'wall' ? 'wall' : 'floor'
-  if (!cornersA || !cornersB || cornersA.length !== 4 || cornersB.length !== 4) return null
-  const centroidA = centroidOf(cornersA)
-  const centroidB = centroidOf(cornersB)
-  const span = Math.hypot(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
-  if (!(span > 1)) return null
-  const doorDir = normalizeVec(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
-  if (!Number.isFinite(doorDir.x) || !Number.isFinite(doorDir.y)) return null
-  const slotsA = referenceCornerSlots(cornersA, centroidB, doorDir)
-  const slotsB = referenceCornerSlots(cornersB, centroidA, doorDir)
-  if (!slotsA || !slotsB) return null
-  const dstA = slotDestinations(spec, which, 0, 0, 1)
-  const dstBLocal = slotDestinations(spec, which, 0, 0, 1)
+const ORIENTATION_CHOICES = ['long-across', 'short-across']
+
+// Door-edge / jamb-edge in the image, versus the ratio that orientation
+// predicts. A 90° swap of both cards is an anisotropic scale of the plane,
+// so it is also a homography: pixel RMS and scale drift both tie, and this
+// is what separates the true width from the 85.60/53.98 stretch.
+function orientationAspectPenalty(slots, spec, orient) {
+  const jamb = (edgeLength(slots[0], slots[1]) + edgeLength(slots[2], slots[3])) / 2
+  const door = (edgeLength(slots[0], slots[2]) + edgeLength(slots[1], slots[3])) / 2
+  if (!(jamb > 1e-6) || !(door > 0)) return Infinity
+  const predicted = orient === 'short-across' ? spec.shortMm / spec.longMm : spec.longMm / spec.shortMm
+  if (!(predicted > 0)) return Infinity
+  return Math.abs(Math.log((door / jamb) / predicted))
+}
+
+// Lowest final 8-corner pixel RMS wins. A near-tie breaks on |scaleDrift − 1|.
+// If those also tie, the image edge ratio picks the orientation.
+function preferOrientFit(candidate, incumbent, slotsA, slotsB, spec) {
+  if (!incumbent) return true
+  const gap = candidate.rmsPx - incumbent.rmsPx
+  if (gap < -1e-4) return true
+  if (gap > 1e-4) return false
+  const candDrift = Math.abs(candidate.scaleDrift - 1)
+  const incDrift = Math.abs(incumbent.scaleDrift - 1)
+  if (Number.isFinite(candDrift) && Number.isFinite(incDrift)) {
+    if (candDrift < incDrift - 1e-4) return true
+    if (candDrift > incDrift + 1e-4) return false
+  } else if (!Number.isFinite(incDrift)) return true
+  else return false
+  const candAspect = orientationAspectPenalty(slotsA, spec, candidate.orientA)
+    + orientationAspectPenalty(slotsB, spec, candidate.orientB)
+  const incAspect = orientationAspectPenalty(slotsA, spec, incumbent.orientA)
+    + orientationAspectPenalty(slotsB, spec, incumbent.orientB)
+  return candAspect < incAspect
+}
+
+// One orientation pair. The shared frame cannot be fixed until the gap W is
+// known, so: fit H_A from A's four corners (outer edge at measurement 0),
+// map all eight corners, and read W_est as the perpendicular distance
+// between the outer edges. Scale drift is B's mapped long edge over the true
+// long edge, using B's own orientation, and the same check from H_B.
+// Destinations are then A's rectangle on [0, extent] and B's on
+// [W − extent, W], with B shifted by the transverse offset seen in A's frame
+// (the edges along the jamb need not be collinear). A wrong W is not a
+// homography of the plane: the 8-point pixel residual is unimodal in W, so a
+// downhill bracket re-estimates it and one parabola refits. Two iterations.
+function fitTwoReferenceOrientation(slotsA, slotsB, spec, which, orientA, orientB) {
+  const dstA = slotDestinations(spec, which, 0, 0, 1, orientA)
+  const dstBLocal = slotDestinations(spec, which, 0, 0, 1, orientB)
   const HA = solveHomographyLeastSquares(slotsA, dstA)
   const HB = solveHomographyLeastSquares(slotsB, dstBLocal)
   if (!HA || !HB) return null
@@ -685,16 +760,16 @@ function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
   const linesFromA = perpendicularLinesDistanceMm(dstA[0], dstA[1], mappedB[0], mappedB[1])
   const linesFromB = perpendicularLinesDistanceMm(dstBLocal[0], dstBLocal[1], mappedA[0], mappedA[1])
   if (!linesFromA || !(linesFromA.meanMm > 1)) return null
-  const across = which === 'wall' ? spec.longMm : spec.shortMm
+  const across = orientExtents(spec, orientB).acrossMm
   let tSum = 0
   for (let i = 0; i < 4; i++) tSum += axisOf(mappedB[i], which).t
   const yB = tSum / 4 - across / 2
-  const driftA = mappedLongEdgeMm(mappedB, which) / spec.longMm
-  const driftB = mappedLongEdgeMm(mappedA, which) / spec.longMm
+  const driftA = mappedLongEdgeMm(mappedB, orientB) / spec.longMm
+  const driftB = mappedLongEdgeMm(mappedA, orientA) / spec.longMm
   const src = slotsA.concat(slotsB)
   const initialW = linesFromA.meanMm
   function fitAt(W) {
-    const dst = dstA.concat(slotDestinations(spec, which, W, yB, -1))
+    const dst = dstA.concat(slotDestinations(spec, which, W, yB, -1, orientB))
     const H = solveHomographyLeastSquares(src, dst)
     if (!H) return null
     return {H, dst, rmsPx: pixelReprojectionRms(H, src, dst)}
@@ -773,9 +848,9 @@ function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
   const mapped = mapPoints(best.H, src)
   if (!mapped) return null
   const lines = perpendicularLinesDistanceMm(mapped[0], mapped[1], mapped[4], mapped[5])
-  if (!lines) return null
+  if (!lines || !Number.isFinite(lines.meanMm)) return null
   const fitRmsMm = metricReprojectionRms(best.H, src, best.dst)
-  if (fitRmsMm == null) return null
+  if (fitRmsMm == null || !Number.isFinite(best.rmsPx)) return null
   return {
     H: best.H,
     src,
@@ -784,12 +859,51 @@ function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
     spreadMm: lines.spreadMm,
     linesAngleDeg: lines.angleDeg,
     fitRmsMm,
+    rmsPx: best.rmsPx,
     scaleDrift: furtherFromOne(driftA, driftB),
     scaleDriftA: driftA,
     scaleDriftB: driftB,
-    refAPx: meanLongEdgePx(orderCorners(cornersA)),
-    refBPx: meanLongEdgePx(orderCorners(cornersB)),
+    orientA,
+    orientB,
   }
+}
+
+// Each reference independently may have its long edge or its short edge
+// across the doorway. The four combinations each run the W search; the
+// lowest 8-corner pixel reprojection wins. The reported width is the mean
+// of the four endpoint-to-other-line distances under that H, not a chord.
+function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
+  const spec = ref || CARD_REF
+  const which = mode === 'wall' ? 'wall' : 'floor'
+  if (!cornersA || !cornersB || cornersA.length !== 4 || cornersB.length !== 4) return null
+  const centroidA = centroidOf(cornersA)
+  const centroidB = centroidOf(cornersB)
+  const span = Math.hypot(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
+  if (!(span > 1)) return null
+  const doorDir = normalizeVec(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
+  if (!Number.isFinite(doorDir.x) || !Number.isFinite(doorDir.y)) return null
+  const slotsA = referenceCornerSlots(cornersA, centroidB, doorDir)
+  const slotsB = referenceCornerSlots(cornersB, centroidA, doorDir)
+  if (!slotsA || !slotsB) return null
+  let chosen = null
+  for (let i = 0; i < ORIENTATION_CHOICES.length; i++) {
+    for (let j = 0; j < ORIENTATION_CHOICES.length; j++) {
+      const fit = fitTwoReferenceOrientation(
+        slotsA,
+        slotsB,
+        spec,
+        which,
+        ORIENTATION_CHOICES[i],
+        ORIENTATION_CHOICES[j]
+      )
+      if (!fit) continue
+      if (preferOrientFit(fit, chosen, slotsA, slotsB, spec)) chosen = fit
+    }
+  }
+  if (!chosen) return null
+  chosen.refAPx = meanLongEdgePx(orderCorners(cornersA))
+  chosen.refBPx = meanLongEdgePx(orderCorners(cornersB))
+  return chosen
 }
 
 function homographyPixelsToMm(pixelCorners, ref) {
@@ -995,6 +1109,9 @@ if (typeof module !== 'undefined' && module.exports) {
     LETTER_SHORT_MM,
     CARD_REF,
     LETTER_REF,
+    LEGAL_REF,
+    NOTEPAD_REF,
+    A4_REF,
     MM_PER_INCH,
     orderCorners,
     isoDestinationMm,
@@ -1004,6 +1121,7 @@ if (typeof module !== 'undefined' && module.exports) {
     solveHomographyLeastSquares,
     applyHomography,
     planarDistanceMm,
+    sheetAxisSeparationMm,
     perpendicularLinesDistanceMm,
     localScaleMmPerPx,
     twoReferenceDestinationMm,
@@ -1034,7 +1152,7 @@ function bootReferenceApp() {
   let phase = 'live'
   let mode = 'floor'
   let layout = 'one'
-  let referenceKind = 'card'
+  let referenceKind = 'letter'
   let customRef = null
   let cameraStream = null
   let cameraReady = false
@@ -1059,7 +1177,7 @@ function bootReferenceApp() {
   let detectStrategy = 'manual'
   let homography = null
   let cardLongPx = 0
-  let points = {a1: null, a2: null, b1: null, b2: null}
+  let points = {a: null, b: null}
   let currentReading = null
   let dragTarget = null
   let dragAnchor = null
@@ -1091,9 +1209,8 @@ function bootReferenceApp() {
     els.wallModeButton = document.getElementById('wallModeButton')
     els.oneRefButton = document.getElementById('oneRefButton')
     els.twoRefButton = document.getElementById('twoRefButton')
-    els.cardReferenceButton = document.getElementById('cardReferenceButton')
-    els.letterReferenceButton = document.getElementById('letterReferenceButton')
-    els.customReferenceButton = document.getElementById('customReferenceButton')
+    els.referencePickerButton = document.getElementById('referencePickerButton')
+    els.referencePickerPopover = document.getElementById('referencePickerPopover')
     els.customReferencePopover = document.getElementById('customReferencePopover')
     els.customLongIn = document.getElementById('customLongIn')
     els.customShortIn = document.getElementById('customShortIn')
@@ -1157,17 +1274,32 @@ function bootReferenceApp() {
 
   function currentReference() {
     if (referenceKind === 'letter') return LETTER_REF
+    if (referenceKind === 'legal') return LEGAL_REF
+    if (referenceKind === 'notepad') return NOTEPAD_REF
+    if (referenceKind === 'a4') return A4_REF
     if (referenceKind === 'custom' && customRef) return customRef
     return CARD_REF
   }
 
-  // Spoken noun in prompts. The Letter reference is a sheet, not a card.
+  // Spoken noun in prompts. Paper presets are a sheet; only the card is a card.
   function referenceNoun(capitalized) {
-    let word = 'card'
-    if (referenceKind === 'letter') word = 'sheet'
+    let word = 'sheet'
+    if (referenceKind === 'card') word = 'card'
     else if (referenceKind === 'custom') word = 'reference'
     if (!capitalized) return word
     return word.charAt(0).toUpperCase() + word.slice(1)
+  }
+
+  function referenceChipLabel() {
+    if (referenceKind === 'card') return 'Card'
+    if (referenceKind === 'letter') return 'Letter'
+    if (referenceKind === 'legal') return 'Legal 11.75×8.5'
+    if (referenceKind === 'notepad') return 'Notepad 11.5×8.5'
+    if (referenceKind === 'a4') return 'A4 11.69×8.27'
+    if (referenceKind === 'custom' && customRef) {
+      return `Custom ${formatInchesToken(customRef.longIn)}×${formatInchesToken(customRef.shortIn)}`
+    }
+    return 'Reference'
   }
 
   function twoRefLayout() {
@@ -1191,15 +1323,11 @@ function bootReferenceApp() {
 
   function pointInstruction(key) {
     if (mode === 'wall') {
-      if (key === 'a1') return 'Press on the floor line — first point. Slide the crosshair, then lift'
-      if (key === 'a2') return 'Press a second point further along the same floor line'
-      if (key === 'b1') return 'Press on the height mark — first point'
-      return 'Press a second point further along the same mark'
+      if (key === 'a') return 'Press on the floor line. Slide the crosshair, then lift'
+      return 'Press on the height mark. Slide the crosshair, then lift'
     }
-    if (key === 'a1') return 'Press on the LEFT jamb base — first point. Slide the crosshair, then lift'
-    if (key === 'a2') return 'Press a second point further along the same jamb'
-    if (key === 'b1') return 'Press on the RIGHT jamb base — first point'
-    return 'Press a second point further along the same jamb'
+    if (key === 'a') return 'Press on the LEFT jamb where it meets the floor. Slide the crosshair, then lift'
+    return 'Press on the RIGHT jamb where it meets the floor. Slide the crosshair, then lift'
   }
 
   function tapReferenceInstruction(which) {
@@ -1232,10 +1360,10 @@ function bootReferenceApp() {
   function liveInstruction() {
     const noun = referenceNoun(false)
     if (twoRefLayout() && mode === 'wall') {
-      return `Put one ${noun} flat on the wall, bottom long edge on the floor line. Put the other flat on the wall, top long edge on the height mark. Both in view, then Capture.`
+      return `Put one ${noun} flat on the wall with one edge on the floor line, and the other flat with one edge on the height mark. Either orientation is fine. Both in view, then Capture.`
     }
     if (twoRefLayout()) {
-      return `Put one ${noun} flat on the floor against each jamb: long edge along the door, one short edge touching the jamb. Step back so both are in view, then Capture.`
+      return `Put one ${noun} flat against each jamb, one edge flush on the jamb face. Either orientation is fine. Both flat and in view, then Capture.`
     }
     if (mode === 'wall') return WALL_LIVE_INSTRUCTION
     return FLOOR_LIVE_INSTRUCTION
@@ -1252,10 +1380,8 @@ function bootReferenceApp() {
     if (phase === 'need-card-tap') return tapReferenceInstruction('a')
     if (phase === 'need-card-b') return tapReferenceInstruction('b')
     if (phase === 'adjust-card' || phase === 'adjust-card-b') return adjustReferenceInstruction()
-    if (phase === 'point-a1') return pointInstruction('a1')
-    if (phase === 'point-a2') return pointInstruction('a2')
-    if (phase === 'point-b1') return pointInstruction('b1')
-    if (phase === 'point-b2') return pointInstruction('b2')
+    if (phase === 'point-a') return pointInstruction('a')
+    if (phase === 'point-b') return pointInstruction('b')
     return resultInstruction()
   }
 
@@ -1303,6 +1429,10 @@ function bootReferenceApp() {
     let top = els.topBar.offsetHeight + 4
     if (els.statusStrip && !els.statusStrip.hasAttribute('hidden')) {
       top += els.statusStrip.offsetHeight + 4
+    }
+    if (els.referencePickerPopover && !els.referencePickerPopover.hasAttribute('hidden')) {
+      els.referencePickerPopover.style.top = `${top}px`
+      top += els.referencePickerPopover.offsetHeight + 4
     }
     if (els.customReferencePopover && !els.customReferencePopover.hasAttribute('hidden')) {
       els.customReferencePopover.style.top = `${top}px`
@@ -1373,16 +1503,32 @@ function bootReferenceApp() {
     logDiagnostic(`mode ${mode}`)
   }
 
-  function updateReferenceChips() {
-    if (els.cardReferenceButton) {
-      els.cardReferenceButton.setAttribute('aria-pressed', referenceKind === 'card' ? 'true' : 'false')
+  function updateReferenceChip() {
+    if (!els.referencePickerButton) return
+    els.referencePickerButton.textContent = referenceChipLabel()
+    els.referencePickerButton.setAttribute('aria-pressed', 'true')
+    if (!els.referencePickerPopover) return
+    const options = els.referencePickerPopover.querySelectorAll('[data-reference]')
+    for (let i = 0; i < options.length; i++) {
+      const selected = options[i].getAttribute('data-reference') === referenceKind
+      options[i].setAttribute('aria-pressed', selected ? 'true' : 'false')
     }
-    if (els.letterReferenceButton) {
-      els.letterReferenceButton.setAttribute('aria-pressed', referenceKind === 'letter' ? 'true' : 'false')
-    }
-    if (els.customReferenceButton) {
-      els.customReferenceButton.setAttribute('aria-pressed', referenceKind === 'custom' ? 'true' : 'false')
-    }
+  }
+
+  function hideReferencePicker() {
+    if (!els.referencePickerPopover) return
+    els.referencePickerPopover.setAttribute('hidden', '')
+    if (els.referencePickerButton) els.referencePickerButton.setAttribute('aria-expanded', 'false')
+    positionChrome()
+  }
+
+  function showReferencePicker() {
+    if (!els.referencePickerPopover) return
+    hideCustomForm()
+    updateReferenceChip()
+    els.referencePickerPopover.removeAttribute('hidden')
+    if (els.referencePickerButton) els.referencePickerButton.setAttribute('aria-expanded', 'true')
+    positionChrome()
   }
 
   function hideCustomForm() {
@@ -1393,6 +1539,7 @@ function bootReferenceApp() {
 
   function showCustomForm() {
     if (!els.customReferencePopover) return
+    hideReferencePicker()
     if (customRef) {
       els.customLongIn.value = formatInchesToken(customRef.longIn)
       els.customShortIn.value = formatInchesToken(customRef.shortIn)
@@ -1400,6 +1547,21 @@ function bootReferenceApp() {
     els.customReferencePopover.removeAttribute('hidden')
     positionChrome()
     if (els.customLongIn) els.customLongIn.focus()
+  }
+
+  function toggleReferencePicker() {
+    if (phase !== 'live') {
+      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
+      return
+    }
+    const pickerOpen = els.referencePickerPopover && !els.referencePickerPopover.hasAttribute('hidden')
+    const customOpen = els.customReferencePopover && !els.customReferencePopover.hasAttribute('hidden')
+    if (pickerOpen || customOpen) {
+      hideReferencePicker()
+      hideCustomForm()
+      return
+    }
+    showReferencePicker()
   }
 
   function setLayout(next) {
@@ -1425,13 +1587,15 @@ function bootReferenceApp() {
       showCustomForm()
       return
     }
+    if (next !== 'card' && next !== 'letter' && next !== 'legal' && next !== 'notepad' && next !== 'a4') return
     hideCustomForm()
-    referenceKind = next === 'letter' ? 'letter' : 'card'
-    updateReferenceChips()
+    hideReferencePicker()
+    referenceKind = next
+    updateReferenceChip()
     instructionHoldUntil = 0
     renderInstruction()
     drawMarks()
-    logDiagnostic(`reference ${referenceKind}`)
+    logDiagnostic(`reference ${referenceToken(currentReference())}`)
   }
 
   function applyCustomReference() {
@@ -1451,7 +1615,7 @@ function bootReferenceApp() {
     }
     customRef = customReference(longIn, shortIn)
     referenceKind = 'custom'
-    updateReferenceChips()
+    updateReferenceChip()
     hideCustomForm()
     instructionHoldUntil = 0
     renderInstruction()
@@ -1466,9 +1630,7 @@ function bootReferenceApp() {
     els.wallModeButton.disabled = locked
     if (els.oneRefButton) els.oneRefButton.disabled = locked
     if (els.twoRefButton) els.twoRefButton.disabled = locked
-    if (els.cardReferenceButton) els.cardReferenceButton.disabled = locked
-    if (els.letterReferenceButton) els.letterReferenceButton.disabled = locked
-    if (els.customReferenceButton) els.customReferenceButton.disabled = locked
+    if (els.referencePickerButton) els.referencePickerButton.disabled = locked
     if (phase === 'live') {
       if (visionReady) {
         button.innerHTML = 'Capture'
@@ -1494,6 +1656,7 @@ function bootReferenceApp() {
   }
 
   function refreshButtonLabels() {
+    updateReferenceChip()
     setPrimaryButton()
     if (els.resetPointsButton && els.resetPointsButton.textContent !== 'Resetting') {
       els.resetPointsButton.innerHTML = twoRefLayout() ? stackedLabel('Reset', 'refs') : stackedLabel('Reset', 'points')
@@ -1730,15 +1893,14 @@ function bootReferenceApp() {
       drawQuad(ctx, refBCorners, '#7dffb3', 'rgba(125, 255, 179, 0.12)', false)
     }
 
-    const keys = ['a1', 'a2', 'b1', 'b2']
+    const keys = ['a', 'b']
     for (let i = 0; i < keys.length; i++) {
       const p = points[keys[i]]
       if (!p) continue
       const local = imageToLocal(p.x, p.y)
       drawHandle(ctx, local.x, local.y)
     }
-    drawSegment(ctx, points.a1, points.a2, '#ffe14a')
-    drawSegment(ctx, points.b1, points.b2, '#7dffb3')
+    drawSegment(ctx, points.a, points.b, '#ffe14a')
 
     if (loupePoint) {
       const guide = imageToLocal(loupePoint.x, loupePoint.y)
@@ -1767,11 +1929,8 @@ function bootReferenceApp() {
   function warningLines(reading) {
     const lines = []
     if (reading.warningDisagree) lines.push(DISAGREE_WARNING)
-    if (reading.warningAngle) {
-      if (reading.layout === '2refs') lines.push(FLUSH_WARNING)
-      else if (reading.mode === 'wall') lines.push('The two lines are not parallel — place both points along each mark, then Retake.')
-      else lines.push('The jamb lines are not parallel — place both points along each jamb face, then Retake.')
-    }
+    if (reading.warningAngle) lines.push(FLUSH_WARNING)
+    if (reading.warningAxis) lines.push(AXIS_MISALIGN_WARNING)
     if (reading.warningScale) lines.push(SCALE_WARNING)
     return lines
   }
@@ -1791,15 +1950,6 @@ function bootReferenceApp() {
     els.resultWarning.textContent = lines.join(' ')
     els.resultWarning.removeAttribute('hidden')
     els.readout.classList.add('has-warning')
-  }
-
-  function worseRatio(a, b) {
-    function score(value) {
-      if (!(value > 0) || !Number.isFinite(value)) return -1
-      return Math.abs(Math.log(value))
-    }
-    if (score(a) >= score(b)) return a
-    return b
   }
 
   function scaleUnreliable(ratio) {
@@ -1832,23 +1982,18 @@ function bootReferenceApp() {
   }
 
   function finishMeasurement() {
-    if (!homography || !points.a1 || !points.a2 || !points.b1 || !points.b2) return
-    const mapped = [
-      applyHomography(homography, points.a1.x, points.a1.y),
-      applyHomography(homography, points.a2.x, points.a2.y),
-      applyHomography(homography, points.b1.x, points.b1.y),
-      applyHomography(homography, points.b2.x, points.b2.y),
-    ]
-    if (mapped.some((p) => !p)) {
+    if (!homography || !points.a || !points.b) return
+    const mappedA = applyHomography(homography, points.a.x, points.a.y)
+    const mappedB = applyHomography(homography, points.b.x, points.b.y)
+    if (!mappedA || !mappedB) {
       showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
     }
-    const lines = perpendicularLinesDistanceMm(mapped[0], mapped[1], mapped[2], mapped[3])
-    if (!lines || !Number.isFinite(lines.meanMm)) {
+    const sep = sheetAxisSeparationMm(mappedA, mappedB)
+    if (!sep || !Number.isFinite(sep.widthMm)) {
       showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
     }
-    const rawMm = Math.hypot(mapped[0].x - mapped[2].x, mapped[0].y - mapped[2].y)
     const center = centroidOf(cardCorners)
     const centerScale = localScaleMmPerPx(homography, center.x, center.y)
     const ratioOf = (p) => {
@@ -1856,26 +2001,25 @@ function bootReferenceApp() {
       if (scale == null || !(centerScale > 0)) return null
       return scale / centerScale
     }
-    const ratioA1 = ratioOf(points.a1)
-    const ratioA2 = ratioOf(points.a2)
-    const ratioB1 = ratioOf(points.b1)
-    const ratioB2 = ratioOf(points.b2)
-    const scaleRatioA = worseRatio(ratioA1, ratioA2)
-    const scaleRatioB = worseRatio(ratioB1, ratioB2)
-    const inches = inchesFromMm(lines.meanMm)
-    const rawIn = inchesFromMm(rawMm)
+    const scaleRatioA = ratioOf(points.a)
+    const scaleRatioB = ratioOf(points.b)
+    const inches = inchesFromMm(sep.widthMm)
+    const rawIn = inchesFromMm(sep.chordMm)
     const noun = referenceNoun(false)
-    const angle = lines.angleDeg
+    const angle = sep.axisAngleDeg
     const reading = baseReading({
-      mm: lines.meanMm,
+      mm: sep.widthMm,
       inches,
-      cm: lines.meanMm / 10,
+      cm: sep.widthMm / 10,
       cardLongPx,
       detect: detectIsManual() ? 'manual' : detectKind,
       detectStrategy: detectStrategy || 'manual',
-      linesAngleDeg: angle,
-      linesSpreadMm: lines.spreadMm,
+      linesAngleDeg: null,
+      linesSpreadMm: null,
       rawPointIn: rawIn,
+      axisAngleDeg: angle,
+      orientA: null,
+      orientB: null,
       scaleRatioA,
       scaleRatioB,
       fitRmsMm: null,
@@ -1883,9 +2027,10 @@ function bootReferenceApp() {
       refAPx: null,
       refBPx: null,
       warningDisagree: false,
-      warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
-      warningScale: scaleUnreliable(ratioA1) || scaleUnreliable(ratioA2) || scaleUnreliable(ratioB1) || scaleUnreliable(ratioB2),
-      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)} · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      warningAngle: false,
+      warningAxis: angle != null && angle > AXIS_ANGLE_WARN_DEG,
+      warningScale: scaleUnreliable(scaleRatioA) || scaleUnreliable(scaleRatioB),
+      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · axis ${formatAngle(angle)} · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
   }
@@ -1910,6 +2055,9 @@ function bootReferenceApp() {
       linesAngleDeg: angle,
       linesSpreadMm: measured.spreadMm,
       rawPointIn: null,
+      axisAngleDeg: null,
+      orientA: measured.orientA,
+      orientB: measured.orientB,
       scaleRatioA: null,
       scaleRatioB: null,
       fitRmsMm: measured.fitRmsMm,
@@ -1918,8 +2066,9 @@ function bootReferenceApp() {
       refBPx: measured.refBPx,
       warningDisagree: disagree,
       warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
+      warningAxis: false,
       warningScale: false,
-      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${Math.round(measured.refAPx)} px · B ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
     const smallA = measured.refAPx < SMALL_CARD_PX
@@ -2443,7 +2592,7 @@ function bootReferenceApp() {
     cardCorners = ordered
     cardLongPx = longPx
     detectKind = kind
-    phase = 'point-a1'
+    phase = 'point-a'
     setPrimaryButton()
     if (longPx < SMALL_CARD_PX) showTemporaryInstruction(smallReferenceNote(longPx), MESSAGE_HOLD_MS)
     else {
@@ -2473,11 +2622,11 @@ function bootReferenceApp() {
   }
 
   function placingPoints() {
-    return phase === 'point-a1' || phase === 'point-a2' || phase === 'point-b1' || phase === 'point-b2' || (phase === 'result' && !twoRefLayout())
+    return phase === 'point-a' || phase === 'point-b' || (phase === 'result' && !twoRefLayout())
   }
 
   function nearestPointKey(localX, localY) {
-    const keys = ['a1', 'a2', 'b1', 'b2']
+    const keys = ['a', 'b']
     let best = null
     let bestDist = HANDLE_HIT_RADIUS_PX
     for (let i = 0; i < keys.length; i++) {
@@ -2492,7 +2641,7 @@ function bootReferenceApp() {
   }
 
   function firstMissingPoint() {
-    const keys = ['a1', 'a2', 'b1', 'b2']
+    const keys = ['a', 'b']
     for (let i = 0; i < keys.length; i++) {
       if (!points[keys[i]]) return keys[i]
     }
@@ -2583,7 +2732,7 @@ function bootReferenceApp() {
     detectStrategy = 'manual'
     homography = null
     cardLongPx = 0
-    points = {a1: null, a2: null, b1: null, b2: null}
+    points = {a: null, b: null}
     currentReading = null
   }
 
@@ -2606,6 +2755,7 @@ function bootReferenceApp() {
     captureBeta = beta
     captureGamma = gamma
     clearCaptureGeometry()
+    hideReferencePicker()
     hideCustomForm()
     clearResultText()
     showStill()
@@ -2656,7 +2806,7 @@ function bootReferenceApp() {
       return
     }
     if (phase === 'live' || phase === 'need-card-tap' || phase === 'adjust-card') {
-      points = {a1: null, a2: null, b1: null, b2: null}
+      points = {a: null, b: null}
       currentReading = null
       clearResultText()
       drawMarks()
@@ -2666,10 +2816,10 @@ function bootReferenceApp() {
       showTemporaryInstruction(needReferenceInstruction(), MESSAGE_HOLD_MS)
       return
     }
-    points = {a1: null, a2: null, b1: null, b2: null}
+    points = {a: null, b: null}
     currentReading = null
     clearResultText()
-    phase = 'point-a1'
+    phase = 'point-a'
     instructionHoldUntil = 0
     setPrimaryButton()
     renderInstruction()
@@ -2709,9 +2859,12 @@ function bootReferenceApp() {
       const reading = measurements[i]
       const row = document.createElement('div')
       row.className = 'measurement-row'
-      const noun = reading.reference === 'letter' ? 'sheet' : (String(reading.reference).indexOf('custom:') === 0 ? 'reference' : 'card')
+      const token = String(reading.reference || 'card')
+      let noun = 'sheet'
+      if (token === 'card') noun = 'card'
+      else if (token.indexOf('custom:') === 0) noun = 'reference'
       const strategy = reading.detectStrategy || 'manual'
-      const warn = reading.warningDisagree || reading.warningAngle || reading.warningScale ? ' · warn' : ''
+      const warn = reading.warningDisagree || reading.warningAngle || reading.warningAxis || reading.warningScale ? ' · warn' : ''
       row.textContent = `${i + 1} · ${reading.mode} · ${reading.layout || '1ref'} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect} · ${strategy}${warn}`
       els.measurementRows.append(row)
     }
@@ -2746,6 +2899,9 @@ function bootReferenceApp() {
       'raw_point_in',
       'scale_ratio_a',
       'scale_ratio_b',
+      'orient_a',
+      'orient_b',
+      'axis_angle_deg',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
       const reading = measurements[i]
@@ -2772,6 +2928,9 @@ function bootReferenceApp() {
         tsvNumber(reading.rawPointIn, 1),
         tsvNumber(reading.scaleRatioA, 3),
         tsvNumber(reading.scaleRatioB, 3),
+        reading.orientA || 'none',
+        reading.orientB || 'none',
+        tsvNumber(reading.axisAngleDeg, 2),
       ].join('\t'))
     }
     return `${lines.join('\n')}\n`
@@ -2839,10 +2998,14 @@ function bootReferenceApp() {
       linesAngleDeg: currentReading.linesAngleDeg,
       linesSpreadMm: currentReading.linesSpreadMm,
       rawPointIn: currentReading.rawPointIn,
+      axisAngleDeg: currentReading.axisAngleDeg,
+      orientA: currentReading.orientA,
+      orientB: currentReading.orientB,
       scaleRatioA: currentReading.scaleRatioA,
       scaleRatioB: currentReading.scaleRatioB,
       warningDisagree: currentReading.warningDisagree,
       warningAngle: currentReading.warningAngle,
+      warningAxis: currentReading.warningAxis,
       warningScale: currentReading.warningScale,
     })
     renderList()
@@ -2972,9 +3135,16 @@ function bootReferenceApp() {
     els.wallModeButton.addEventListener('click', () => setMode('wall'))
     if (els.oneRefButton) els.oneRefButton.addEventListener('click', () => setLayout('one'))
     if (els.twoRefButton) els.twoRefButton.addEventListener('click', () => setLayout('two'))
-    els.cardReferenceButton.addEventListener('click', () => setReference('card'))
-    els.letterReferenceButton.addEventListener('click', () => setReference('letter'))
-    if (els.customReferenceButton) els.customReferenceButton.addEventListener('click', () => setReference('custom'))
+    if (els.referencePickerButton) {
+      els.referencePickerButton.addEventListener('click', () => toggleReferencePicker())
+    }
+    if (els.referencePickerPopover) {
+      els.referencePickerPopover.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-reference]')
+        if (!option) return
+        setReference(option.getAttribute('data-reference'))
+      })
+    }
     if (els.customApplyButton) els.customApplyButton.addEventListener('click', () => applyCustomReference())
     if (els.customLongIn) {
       els.customLongIn.addEventListener('keydown', (event) => {

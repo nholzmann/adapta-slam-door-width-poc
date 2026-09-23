@@ -76,7 +76,7 @@ Copy this into your notes. One row per door. Leave the pass/fail judgment to the
 
 If the ratio is similar across doors and sessions, the bias is constant and calibration may make the method viable. If the ratio wanders, the method is not viable.
 
-`method` is **SLAM** or **Reference**. Use the SLAM columns (`raw_*`, `ratio`, `est_height_in`, tracking) for SLAM rows. For Reference rows, put the three still-photo inches in `reading1` / `reading2` / `reading3`, leave the raw/ratio/height/tracking cells blank or `n/a`, and write `reference` (`card`, `letter`, or `custom:11.75x8.5`), `1ref` or `2refs`, `card_long_px`, and the tilt angles in notes.
+`method` is **SLAM** or **Reference**. Use the SLAM columns (`raw_*`, `ratio`, `est_height_in`, tracking) for SLAM rows. For Reference rows, put the three still-photo inches in `reading1` / `reading2` / `reading3`, leave the raw/ratio/height/tracking cells blank or `n/a`, and write `reference` (`card`, `letter`, `legal:11.75x8.5`, `notepad:11.5x8.5`, `a4:11.69x8.27`, or `custom:11.5x8.5`), `1ref` or `2refs`, `card_long_px`, and the tilt angles in notes.
 
 | door | method | actual_in | reading1 | reading2 | reading3 | mean | delta_from_actual | raw_reading1 | raw_reading2 | raw_reading3 | raw_mean | raw_delta | ratio | est_height_in | phone model + OS | floor type | tracking felt stable (y/n) | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -101,11 +101,11 @@ The on-page list shows the same readings. When that reading was calibrated, the 
 
 ## Reference tab
 
-This tab does not use SLAM. It takes a still photo and uses a credit card, a Letter sheet, or a custom rectangle in the picture as the scale. Use it on the same doors as the SLAM tab so the two methods can be compared. Open **Reference** in the top bar (full navigation; the camera from SLAM is released).
+This tab does not use SLAM. It takes a still photo and uses a known rectangle in the picture as the scale. Use it on the same doors as the SLAM tab so the two methods can be compared. Open **Reference** in the top bar (full navigation; the camera from SLAM is released).
 
-The camera fills the screen. The top bar is one translucent row: **SLAM** / **Reference** pills, then **Floor** / **Wall**, **1 ref** / **2 refs**, and **Card** / **Sheet** / **Custom**, then **ⓘ**. ⓘ shows or hides the status line (vision library, camera size, tilt). On iPhone, **Enable tilt** is on that line; it only records the angle. The instruction under the bar is one line; tap it to read the rest. The bottom sheet is collapsed to one row: the result on the left, the four buttons on the right. Tap the handle (the bar and the chevron) to open the session list, the debug log, and the credits. While your finger is down on a point, the sheet and the instruction hide so they do not cover the magnifier or the edge of the photo.
+The camera fills the screen. The top bar is one translucent row: **SLAM** / **Reference** pills, then **Floor** / **Wall**, **1 ref** / **2 refs**, and **Reference**, then **ⓘ**. ⓘ shows or hides the status line (vision library, camera size, tilt). On iPhone, **Enable tilt** is on that line; it only records the angle. The instruction under the bar is one line; tap it to read the rest. The bottom sheet is collapsed to one row: the result on the left, the four buttons on the right. Tap the handle (the bar and the chevron) to open the session list, the debug log, and the credits. While your finger is down on a point, the sheet and the instruction hide so they do not cover the magnifier or the edge of the photo.
 
-Needs a physical **credit card, debit card, or other ISO ID-1 card** (the common US wallet card, 85.60 mm × 53.98 mm), or a **US Letter sheet** (279.4 mm × 215.9 mm). A business card or a phone is the wrong size. A Letter sheet gives about three times the accuracy of a card. **Custom** is for a page that is neither: enter the long edge and the short edge in inches and tap **Apply**. The hint under the fields lists Letter 11 × 8.5, Legal pad 11.75 × 8.5, A4 11.69 × 8.27, and Credit card 3.370 × 2.125. The size is remembered until you reload. Try the sheet and, if the page in your hand is a legal pad, the legal-pad preset, on the same door.
+**Reference** opens the size list. The default is **Printer paper (Letter) 11 × 8.5**, marked recommended. The other rows are **Credit card 3.370 × 2.125**, **Legal pad 11.75 × 8.5**, **Notepad 11.5 × 8.5**, **A4 11.69 × 8.27**, and **Custom…** (enter the long edge and the short edge in inches and tap **Apply**). The chip shows the current choice (`Letter`, `Notepad 11.5×8.5`, `Card`). Use plain printer paper: every Letter sheet is exactly 11 × 8.5. Notepads vary — a notepad page of 11.5 in read 1.4 in low until the size was corrected. Pick the matching preset or measure the page. A business card or a phone is the wrong size. A Letter sheet gives about three times the accuracy of a card. The choice is remembered until you reload.
 
 Any comfortable camera angle is fine. The page does not need the phone to be level. Capture never waits for tilt. **2 refs** is the measurement to use. **1 ref** is the older flow and is easy to get wrong.
 
@@ -113,11 +113,11 @@ Any comfortable camera angle is fine. The page does not need the phone to be lev
 
 The door width is the perpendicular distance between the two jamb faces, not the distance between two dots. Put one reference against each jamb so both ends of that gap are a known length.
 
-**Floor.** Both references lie flat on the floor. The long edge of each runs along the door. One short edge of the left reference touches the left jamb face, and one short edge of the right reference touches the right jamb face. They do not have to line up with each other along the jamb. Cards and sheets are both fine. Both references are the same kind (both cards, both sheets, or both the custom size).
+**Floor.** Both references lie flat on the floor. Either orientation is fine: what matters is one edge flush against each jamb face, and both references flat. They do not have to line up with each other along the jamb. The fit reports which way it found each one (`long-across` means the long edge spans the doorway, `short-across` means the short edge does). Both references are the same kind.
 
-**Wall.** The lower reference lies flat on the wall with its bottom long edge on the floor line. The upper reference lies flat on the wall with its top long edge on the height mark. The height is the gap between those two edges.
+**Wall.** The lower reference lies flat on the wall with one edge on the floor line. The upper reference lies flat on the wall with one edge on the height mark. Either orientation is fine. The height is the gap between those two edges.
 
-1. Choose **Floor** or **Wall**, **2 refs**, and **Card**, **Sheet**, or **Custom**, before Capture. Those chips lock after Capture.
+1. Choose **Floor** or **Wall**, **2 refs**, and the reference size, before Capture. Those chips lock after Capture.
 2. Step back so both references and both jambs (or the floor line and the height mark) are in view. Turn the phone sideways if the door does not fit. Get each reference at least as big as the dashed box.
 3. Tap **Capture**.
 4. Tap the left reference (on a wall, the lower one). Check the corners, drag a handle if one is off — the magnifier appears while your finger is down — then tap **Confirm**.
@@ -128,36 +128,36 @@ The door width is the perpendicular distance between the two jamb faces, not the
 Amber lines under the result:
 
 - **References disagree** — the two outlines do not agree about scale (the fit is worse than 2 mm, or one reference looks more than 5% off the other's size). Both must lie flat on the same surface. Retake.
-- **Cards are not both flush against the jambs** — the two outer edges are more than 3° off parallel. Re-seat them so each short edge (on a wall, each long edge) is actually against the jamb or the mark, then Retake.
+- **The outer edges are not parallel** — they are more than 3° off parallel. Re-seat each reference so one edge is flush against the jamb or the mark, then Retake. The result line names the orientation the fit chose for each reference.
 
 ### One reference
 
-Use this only when you cannot put a reference on both jambs. The reference must lie **on** the line between the two jamb lines, and bigger is better. A card a step further from the camera than the taps, and off that line, has read 98 in on a 32 in door. The page learned the perspective from edges only about 35 px tall, and a small edge error stretched across that gap.
+Use this only when you cannot put a reference on both jambs. The reference must lie **on** the line between the two jambs, long edge along the door, and bigger is better. A card a step further from the camera than the taps, and off that line, has read 98 in on a 32 in door. The page learned the perspective from edges only about 35 px tall, and a small edge error stretched across that gap.
 
-After Confirm, place **two points on each jamb**, not one. Press and slide, with the magnifier, for all four.
+After Confirm, place **one point on each jamb**. Press and slide, with the magnifier. The width is not the straight line between those two taps. The sheet's edges are axis-aligned in its own millimetre frame, and the doorway is whichever of those axes the two taps run along. The big number is that component (the perpendicular width). A tap that slides along the jamb changes the raw chord and not the width. If the taps miss the sheet's edge direction by more than 12°, the page warns that the sheet may not be square to the door, or a tap is off the jamb, and it still shows the raw chord.
 
 ### Floor mode (door width)
 
 1. Tape-measure the door first, the same way as the SLAM section.
-2. Choose **1 ref**, **Card**, **Sheet**, or **Custom**, and **Floor** if it is not already selected. Mode, layout, and reference cannot be changed after Capture.
-3. Lay the card or sheet **on the floor on the line between the jambs**, as large in the frame as you can. Do not set it a step closer or further than the jambs.
+2. Choose **1 ref** and **Floor** if it is not already selected. Leave **Reference** on **Letter** unless the page in your hand is a different preset. Mode, layout, and reference cannot be changed after Capture.
+3. Lay a plain sheet of printer paper **on the floor on the line between the jambs, long edge along the door**, as large in the frame as you can. Do not set it a step closer or further than the jambs.
 4. Step back so **both jambs and the reference are in view**. Turn the phone sideways (landscape) if the door does not fit. Aim at the threshold at whatever angle is comfortable.
 5. Get the reference **at least as big as the dashed box** ("card at least this big" or "sheet at least this big"). If the box says the reference is small after you confirm it, Retake from closer.
 6. Tap **Capture**.
 7. Tap the reference. The page looks for the card or sheet on its own. A green flash and **Card found — check the corners, then Confirm** (or **Sheet found**) means check that the yellow quad sits on the four edges. The handles are the virtual sharp corners, slightly outside rounded corners. Press a handle and the magnifier appears immediately; slide it if a corner is off. An amber flash and **Card not found — drag the corners onto its edges** (or **Sheet not found**) means detection missed: drag each corner onto an edge. Then tap **Confirm card** or **Confirm sheet**.
-8. Place four points by press-and-slide, two along each jamb. Press on the left jamb base for the first point, keep your finger down, slide until the crosshair sits on the jamb edge, then lift. Press a second point further along the same jamb, a few inches from the first. Do the same pair on the right jamb. The round magnifier stays above your finger (or below it near the top of the screen), and a faint vertical line shows whether the point is on the jamb edge. A quick tap still leaves the point where the finger landed; sliding is how you line it up. The big number is the perpendicular width (`⊥ width`). The smaller raw figure is the straight distance between the first left point and the first right point, which reads high when those two points are not side by side.
-9. Tap **Save to list**. Repeat for **three** captures per door (Retake between them, not only Reset points). Reset points keeps the reference and clears all four points; Retake takes a new photo.
+8. Place two points by press-and-slide, one on each jamb. Press on the left jamb where it meets the floor, keep your finger down, slide until the crosshair sits on the jamb edge, then lift. Do the same on the right jamb. The round magnifier stays above your finger (or below it near the top of the screen), and a faint vertical line shows whether the point is on the jamb edge. A quick tap still leaves the point where the finger landed; sliding is how you line it up. The big number is the perpendicular width along the sheet's axis (`⊥ width`). The smaller raw figure is the straight distance between the two taps, which reads high when those taps are not side by side.
+9. Tap **Save to list**. Repeat for **three** captures per door (Retake between them, not only Reset points). Reset points keeps the reference and clears both points; Retake takes a new photo.
 
-If either jamb's scale is more than 1.5× the scale at the reference, an amber line stays under the result: **Unreliable: reference is far from the points or too small.** Move the reference onto the line between the points, use a larger sheet, or switch to **2 refs**. If the two jamb lines are more than 3° off parallel, the page says the lines are not parallel — place both points along each jamb face.
+If either jamb's scale is more than 1.5× the scale at the reference, an amber line stays under the result: **Unreliable: reference is far from the points or too small.** Move the reference onto the line between the points, use a larger sheet, or switch to **2 refs**. If the two taps do not run along the sheet's edge direction (more than 12° off), the page says so and shows the raw chord — the sheet may not be square to the door, or a tap is off the jamb.
 
 ### Wall mode (one per tester)
 
-Do this once per person, not once per door. Prefer **2 refs** (lower reference on the floor line, upper reference on the height mark). In **1 ref**, the same rules apply: any comfortable angle, the reference on the line between the two marks, at least as big as the dashed box, and press-and-slide for all four points.
+Do this once per person, not once per door. Prefer **2 refs** (lower reference on the floor line, upper reference on the height mark). In **1 ref**, the same rules apply: any comfortable angle, the reference on the line between the two marks, at least as big as the dashed box, and press-and-slide for one point on each mark. The width is the sheet-axis component, with the same 12° warning.
 
 1. Tape-measure a known height (floor to a handrail, or floor to a piece of tape).
 2. Hold the card or sheet **flat against the wall** on the line between the floor and the height mark.
 3. Switch to **Wall** *before* Capture. Get the **floor line** and the **height mark** in view, then Capture.
-4. Tap the reference and confirm the corners. In **1 ref**, press-and-slide two points along the **floor line**, then two points along the **top of the handrail or tape**. In **2 refs**, tap the lower reference, confirm, tap the upper reference, confirm.
+4. Tap the reference and confirm the corners. In **1 ref**, press-and-slide one point on the **floor line**, then one point on the **top of the handrail or tape**. In **2 refs**, tap the lower reference, confirm, tap the upper reference, confirm.
 5. Save to list. Write `method = Reference` and `Wall` in notes.
 
 ### Copy results (Reference)
@@ -165,11 +165,11 @@ Do this once per person, not once per door. Prefer **2 refs** (lower reference o
 The Reference **Copy results** paste is tab-separated and looks like this:
 
 ```
-n	mode	reference	inches	cm	card_long_px	image_w	image_h	tilt_beta	tilt_gamma	detect	detect_strategy	layout	fit_rms_mm	scale_drift	ref_a_px	ref_b_px	lines_angle_deg	lines_spread_mm	raw_point_in	scale_ratio_a	scale_ratio_b
-1	floor	custom:11.75x8.5	32.0	81.3	690	3840	2160	41.0	-0.5	auto	flood30+otsu	2refs	0.60	1.020	690	670	0.80	0.40	none	none	none
-2	floor	card	36.0	91.4	214	3840	2160	43.0	-1.2	auto	edges50	1ref	none	none	none	none	0.40	1.20	36.5	1.020	1.080
+n	mode	reference	inches	cm	card_long_px	image_w	image_h	tilt_beta	tilt_gamma	detect	detect_strategy	layout	fit_rms_mm	scale_drift	ref_a_px	ref_b_px	lines_angle_deg	lines_spread_mm	raw_point_in	scale_ratio_a	scale_ratio_b	orient_a	orient_b	axis_angle_deg
+1	floor	letter	32.0	81.3	690	3840	2160	41.0	-0.5	auto	flood30+otsu	2refs	0.60	1.020	690	670	0.80	0.40	none	none	none	short-across	short-across	none
+2	floor	notepad:11.5x8.5	36.0	91.4	214	3840	2160	43.0	-1.2	auto	edges50	1ref	none	none	none	none	none	none	36.5	1.020	1.080	none	none	4.20
 ```
 
-`reference` is `card`, `letter`, or `custom:11.75x8.5` (the long and short edges in inches). `layout` is `2refs` or `1ref`. `inches` is the perpendicular width. `card_long_px` is the reference's long edge in the photo; in two-reference mode it is the first reference, and `ref_a_px` / `ref_b_px` list both. `fit_rms_mm` is how far the eight corners miss the fitted rectangles, in millimetres. `scale_drift` is how much the two references disagree about size (1.00 means they agree). `lines_angle_deg` is the angle between the two jamb lines (0 means parallel). `lines_spread_mm` is the spread of the four edge-to-edge distances. `raw_point_in` is the straight point-to-point distance in one-reference mode, for comparison with the perpendicular width. `scale_ratio_a` and `scale_ratio_b` compare the local scale at each jamb with the scale at the reference (one-reference mode). Empty values say `none`.
+`reference` is `card`, `letter`, `legal:11.75x8.5`, `notepad:11.5x8.5`, `a4:11.69x8.27`, or `custom:11.5x8.5` (long and short edges in inches). `layout` is `2refs` or `1ref`. `inches` is the perpendicular width. `card_long_px` is the reference's long edge in the photo; in two-reference mode it is the first reference, and `ref_a_px` / `ref_b_px` list both. `fit_rms_mm` is how far the eight corners miss the fitted rectangles, in millimetres. `scale_drift` is how much the two references disagree about size (1.00 means they agree). `lines_angle_deg` is the angle between the two outer edges in two-reference mode (0 means parallel). `lines_spread_mm` is the spread of the four edge-to-edge distances. One-reference rows write `none` for both of those. `raw_point_in` is the straight point-to-point distance in one-reference mode, for comparison with the perpendicular width. `scale_ratio_a` and `scale_ratio_b` compare the local scale at each jamb with the scale at the reference (one-reference mode). `orient_a` and `orient_b` are `long-across` or `short-across` (which physical edge spans the doorway) in two-reference mode, and `none` for one reference. `axis_angle_deg` is how far the two taps miss the sheet's edge direction, in degrees, in one-reference mode, and `none` for two references. Empty values say `none`.
 
 `tilt_beta` and `tilt_gamma` are degrees at the moment of Capture, or `none` if tilt was not available. `detect` is `auto` if the reference was found and the corners were not dragged more than 3 px, otherwise `manual`. In two-reference mode `detect` is `manual` if either reference was dragged. `detect_strategy` is which search found the outline: `edges30`, `edges50`, `edges80`, `flood18`, `flood30`, `otsu`, or `otsu-inv`. It is `manual` when none of those matched and the page used the default rectangle. Two references join the two searches with `+`, for example `flood30+otsu`. If you drag an auto-found corner more than 3 px, `detect` becomes `manual` and `detect_strategy` stays the search that found it. The list is only in the phone's memory. Closing the tab clears it.

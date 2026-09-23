@@ -243,6 +243,9 @@ const twoRefErr = Math.abs(twoRef.widthMm - TARGET_MM)
 if (twoRefErr > 0.5) {
   fail(`two-ref 45°+yaw 914.4 mm recovered ${twoRef.widthMm.toFixed(4)} mm (err ${twoRefErr.toFixed(4)} mm > 0.5 mm)`)
 }
+if (twoRef.orientA !== 'long-across' || twoRef.orientB !== 'long-across') {
+  fail(`two-ref floor orientation ${twoRef.orientA}/${twoRef.orientB}, expected long-across/long-across`)
+}
 
 function makeRng(seed) {
   let state = seed >>> 0
@@ -297,10 +300,117 @@ const wallErr = Math.abs(wallRef.widthMm - TARGET_MM)
 if (wallErr > 0.5) {
   fail(`wall two-ref 914.4 mm recovered ${wallRef.widthMm.toFixed(4)} mm (err ${wallErr.toFixed(4)} mm > 0.5 mm)`)
 }
+if (wallRef.orientA !== 'short-across' || wallRef.orientB !== 'short-across') {
+  fail(`wall orientation ${wallRef.orientA}/${wallRef.orientB}, expected short-across/short-across`)
+}
+
+// Long edge along the jamb: the short edge spans the doorway. Same camera.
+function cardOnFloor(x0, alongDoor, alongJamb) {
+  return [
+    {x: x0, y: 0},
+    {x: x0 + alongDoor, y: 0},
+    {x: x0 + alongDoor, y: alongJamb},
+    {x: x0, y: alongJamb},
+  ].map((p) => projectYawed(p.x, p.y))
+}
+
+function expectOrient(measured, label, orientA, orientB) {
+  if (!measured) fail(`${label} returned null`)
+  const err = Math.abs(measured.widthMm - TARGET_MM)
+  if (err > 0.5) {
+    fail(`${label} recovered ${measured.widthMm.toFixed(4)} mm (err ${err.toFixed(4)} mm > 0.5 mm)`)
+  }
+  if (measured.orientA !== orientA || measured.orientB !== orientB) {
+    fail(`${label} orientation ${measured.orientA}/${measured.orientB}, expected ${orientA}/${orientB}`)
+  }
+  return err
+}
+
+const turned = ref.twoReferenceDestinationMm(
+  cardOnFloor(0, cardShort, cardLong),
+  cardOnFloor(TARGET_MM - cardShort, cardShort, cardLong),
+  ref.CARD_REF,
+  'floor'
+)
+const turnedErr = expectOrient(turned, 'two-ref both long-along-jamb', 'short-across', 'short-across')
+
+const mixed = ref.twoReferenceDestinationMm(
+  cardOnFloor(0, cardShort, cardLong),
+  cardOnFloor(TARGET_MM - cardLong, cardLong, cardShort),
+  ref.CARD_REF,
+  'floor'
+)
+const mixedErr = expectOrient(mixed, 'two-ref A turned, B not', 'short-across', 'long-across')
+
+// 1-ref: sheet edges are axis-aligned in its metric frame. A 150 mm slide
+// along the jamb must not change the perpendicular width. The rotated sheet
+// puts that doorway on the other metric axis (long edge along the jamb).
+function roundTripSeparation(sheetCorners, mmA, mmB) {
+  const pxCorners = sheetCorners.map((p) => ref.applyHomography(FORWARD, p.x, p.y))
+  if (pxCorners.some((p) => !p)) fail('sheet forward dropped a corner')
+  const fit = ref.homographyPixelsToMm(pxCorners, ref.LETTER_REF)
+  if (!fit || !fit.H) fail('sheet homographyPixelsToMm returned null')
+  const pxA = ref.applyHomography(FORWARD, mmA.x, mmA.y)
+  const pxB = ref.applyHomography(FORWARD, mmB.x, mmB.y)
+  if (!pxA || !pxB) fail('sheet-axis tap fell off the forward homography')
+  const backA = ref.applyHomography(fit.H, pxA.x, pxA.y)
+  const backB = ref.applyHomography(fit.H, pxB.x, pxB.y)
+  if (!backA || !backB) fail('sheet-axis tap fell off the recovered homography')
+  const sep = ref.sheetAxisSeparationMm(backA, backB)
+  if (!sep) fail('sheetAxisSeparationMm returned null')
+  return sep
+}
+
+const sheetLong = ref.LETTER_LONG_MM
+const sheetShort = ref.LETTER_SHORT_MM
+const sheetAlongDoor = [
+  {x: 0, y: 0},
+  {x: sheetLong, y: 0},
+  {x: sheetLong, y: sheetShort},
+  {x: 0, y: sheetShort},
+]
+const alignedSep = roundTripSeparation(sheetAlongDoor, {x: 0, y: 0}, {x: TARGET_MM, y: 150})
+const alignedWidthErr = Math.abs(alignedSep.widthMm - TARGET_MM)
+if (alignedWidthErr > 0.5) {
+  fail(`sheet-axis width ${alignedSep.widthMm.toFixed(4)} mm (err ${alignedWidthErr.toFixed(4)} mm > 0.5 mm)`)
+}
+const alignedChordErr = Math.abs(alignedSep.chordMm - 926.6)
+if (alignedChordErr > 0.5) {
+  fail(`sheet-axis chord ${alignedSep.chordMm.toFixed(4)} mm, expected 926.6 mm`)
+}
+if (alignedSep.axis !== 'x') fail(`aligned sheet used axis ${alignedSep.axis}, expected x`)
+
+// Same sheet turned so its long edge lies along the jamb. The doorway is then
+// the short edge, which this corner order puts on metric y.
+const sheetAlongJamb = [
+  {x: 0, y: 0},
+  {x: sheetLong, y: 0},
+  {x: sheetLong, y: sheetShort},
+  {x: 0, y: sheetShort},
+]
+const rotatedSep = roundTripSeparation(sheetAlongJamb, {x: 0, y: 0}, {x: 150, y: TARGET_MM})
+const rotatedWidthErr = Math.abs(rotatedSep.widthMm - TARGET_MM)
+if (rotatedWidthErr > 0.5) {
+  fail(`rotated-sheet width ${rotatedSep.widthMm.toFixed(4)} mm (err ${rotatedWidthErr.toFixed(4)} mm > 0.5 mm)`)
+}
+const rotatedChordErr = Math.abs(rotatedSep.chordMm - 926.6)
+if (rotatedChordErr > 0.5) {
+  fail(`rotated-sheet chord ${rotatedSep.chordMm.toFixed(4)} mm, expected 926.6 mm`)
+}
+if (rotatedSep.axis !== 'y') fail(`rotated sheet used axis ${rotatedSep.axis}, expected y`)
 
 const customPad = ref.customReference(11.75, 8.5)
 if (ref.referenceToken(customPad) !== 'custom:11.75x8.5') {
   fail(`custom token ${ref.referenceToken(customPad)}, expected custom:11.75x8.5`)
+}
+if (ref.referenceToken(ref.LEGAL_REF) !== 'legal:11.75x8.5') {
+  fail(`legal token ${ref.referenceToken(ref.LEGAL_REF)}, expected legal:11.75x8.5`)
+}
+if (ref.referenceToken(ref.NOTEPAD_REF) !== 'notepad:11.5x8.5') {
+  fail(`notepad token ${ref.referenceToken(ref.NOTEPAD_REF)}, expected notepad:11.5x8.5`)
+}
+if (ref.referenceToken(ref.A4_REF) !== 'a4:11.69x8.27') {
+  fail(`a4 token ${ref.referenceToken(ref.A4_REF)}, expected a4:11.69x8.27`)
 }
 
 console.log('orderCorners: TL/TR/BR/BL recovered from shuffled pixels')
@@ -314,7 +424,11 @@ console.log(`letter recovered distance: ${letterRecovered.toFixed(4)} mm (target
 console.log(`letter distance error: ${letterErr.toExponential(3)} mm (limit 0.5 mm)`)
 console.log(`least-squares distance error: ${lsErr.toExponential(3)} mm (limit 0.5 mm)`)
 console.log(`line-to-line offset error: ${jambErr.toExponential(3)} mm (limit 0.5 mm); A1–B1 chord ${rawChord.toFixed(4)} mm`)
-console.log(`two-ref 45° pitch + 20° yaw error: ${twoRefErr.toExponential(3)} mm (limit 0.5 mm); drift ${twoRef.scaleDrift.toFixed(4)}; rms ${twoRef.fitRmsMm.toExponential(3)} mm; angle ${twoRef.linesAngleDeg.toFixed(3)}°`)
+console.log(`two-ref 45° pitch + 20° yaw error: ${twoRefErr.toExponential(3)} mm (limit 0.5 mm); drift ${twoRef.scaleDrift.toFixed(4)}; rms ${twoRef.fitRmsMm.toExponential(3)} mm; angle ${twoRef.linesAngleDeg.toFixed(3)}°; ${twoRef.orientA}/${twoRef.orientB}`)
 console.log(`two-ref ±0.5 px noise error: ${noisyErr.toFixed(4)} mm (limit 5 mm); width ${noisy.widthMm.toFixed(4)} mm`)
-console.log(`wall two-ref error: ${wallErr.toExponential(3)} mm (limit 0.5 mm)`)
+console.log(`wall two-ref error: ${wallErr.toExponential(3)} mm (limit 0.5 mm); ${wallRef.orientA}/${wallRef.orientB}`)
+console.log(`two-ref both short-across error: ${turnedErr.toExponential(3)} mm (limit 0.5 mm); ${turned.orientA}/${turned.orientB}`)
+console.log(`two-ref mixed orientation error: ${mixedErr.toExponential(3)} mm (limit 0.5 mm); ${mixed.orientA}/${mixed.orientB}`)
+console.log(`sheet-axis offset error: ${alignedWidthErr.toExponential(3)} mm (limit 0.5 mm); chord ${alignedSep.chordMm.toFixed(4)} mm; axis ${alignedSep.axis}; angle ${alignedSep.axisAngleDeg.toFixed(2)}°`)
+console.log(`sheet-axis rotated error: ${rotatedWidthErr.toExponential(3)} mm (limit 0.5 mm); axis ${rotatedSep.axis}`)
 console.log('PASS')
