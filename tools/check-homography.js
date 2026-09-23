@@ -516,8 +516,112 @@ function projectTemplateQuad(originX, originY, printS, projectFn) {
   return quad.cardCorners
 }
 
-const originA = {x: -0.60 * ref.MM_PER_INCH * PRINT_S, y: 0}
-const originB = {x: TARGET_MM - 10.40 * ref.MM_PER_INCH * PRINT_S, y: 0}
+function templateExtentFromTable() {
+  const ids = ref.TEMPLATE_LETTER_V1.ids
+  const squares = ref.TEMPLATE_LETTER_V1.outerSquaresIn
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let i = 0; i < ids.length; i++) {
+    const square = squares[ids[i]]
+    if (square[0] < minX) minX = square[0]
+    if (square[1] < minY) minY = square[1]
+    if (square[2] > maxX) maxX = square[2]
+    if (square[3] > maxY) maxY = square[3]
+  }
+  return {minX, minY, maxX, maxY}
+}
+
+const templateExtent = templateExtentFromTable()
+if (Math.abs(ref.TEMPLATE_OUTER_LONG_IN - (templateExtent.maxX - templateExtent.minX)) > 1e-9) {
+  fail(`TEMPLATE_OUTER_LONG_IN ${ref.TEMPLATE_OUTER_LONG_IN} drifted from the marker table`)
+}
+if (Math.abs(ref.TEMPLATE_OUTER_SHORT_IN - (templateExtent.maxY - templateExtent.minY)) > 1e-9) {
+  fail(`TEMPLATE_OUTER_SHORT_IN ${ref.TEMPLATE_OUTER_SHORT_IN} drifted from the marker table`)
+}
+const outerAtFull = ref.templateOuterQuadMm(1)
+if (Math.abs(outerAtFull[0].x - templateExtent.minX * ref.MM_PER_INCH) > 1e-6) {
+  fail('outer quad min x is not the marker table')
+}
+if (Math.abs(outerAtFull[0].y - templateExtent.minY * ref.MM_PER_INCH) > 1e-6) {
+  fail('outer quad min y is not the marker table')
+}
+if (Math.abs(outerAtFull[1].x - templateExtent.maxX * ref.MM_PER_INCH) > 1e-6) {
+  fail('outer quad max x is not the marker table')
+}
+if (Math.abs(outerAtFull[2].y - templateExtent.maxY * ref.MM_PER_INCH) > 1e-6) {
+  fail('outer quad max y is not the marker table')
+}
+if (Math.abs(outerAtFull[3].x - templateExtent.minX * ref.MM_PER_INCH) > 1e-6) {
+  fail('outer quad BL x is not the marker table')
+}
+
+const frameInset = 0.4
+const pageIn = ref.TEMPLATE_LETTER_V1.pageIn
+const frameClearX = templateExtent.minX - frameInset
+const frameClearY = templateExtent.minY - frameInset
+const frameClearRight = pageIn[0] - templateExtent.maxX - frameInset
+const frameClearBottom = pageIn[1] - templateExtent.maxY - frameInset
+if (Math.abs(frameClearX - frameClearRight) > 1e-9 || Math.abs(frameClearY - frameClearBottom) > 1e-9) {
+  fail('marker clearance to the clip frame is not symmetric')
+}
+if (Math.abs(frameClearX - 0.45) > 1e-9 || Math.abs(frameClearY - 0.45) > 1e-9) {
+  fail(`markers should sit 0.45 in inside the clip frame, got ${frameClearX} × ${frameClearY}`)
+}
+
+function layoutBoxes(layout) {
+  const boxes = [layout.card, layout.cardCaption, layout.barLine, layout.barCaption]
+  for (let i = 0; i < layout.ticks.length; i++) boxes.push(layout.ticks[i])
+  for (let i = 0; i < layout.nums.length; i++) boxes.push(layout.nums[i])
+  return boxes
+}
+
+function boxesOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+const templateLayout = ref.templateInteriorLayoutIn()
+if (templateLayout.card.y !== 2 || Math.abs(templateLayout.card.y + templateLayout.card.h - 4.125) > 1e-9) {
+  fail(`card should run y 2–4.125, got ${templateLayout.card.y}–${templateLayout.card.y + templateLayout.card.h}`)
+}
+if (templateLayout.barLine.y !== 5.2) fail(`bar line y ${templateLayout.barLine.y}, expected 5.2`)
+if (Math.abs(templateLayout.card.x * 2 + templateLayout.card.w - pageIn[0]) > 1e-9) fail('card is not centred')
+if (Math.abs(templateLayout.barLine.x * 2 + templateLayout.barLine.w - pageIn[0]) > 1e-9) fail('bar is not centred')
+if (Math.abs(templateLayout.barLine.w - ref.TEMPLATE_LETTER_V1.barIn) > 1e-12) fail('bar width drifted from the table')
+
+const expandedMarkers = ref.TEMPLATE_LETTER_V1.ids.map((id) => {
+  const square = ref.TEMPLATE_LETTER_V1.outerSquaresIn[id]
+  return {
+    id,
+    x: square[0] - 0.25,
+    y: square[1] - 0.25,
+    w: (square[2] - square[0]) + 0.5,
+    h: (square[3] - square[1]) + 0.5,
+  }
+})
+const interiorBoxes = layoutBoxes(templateLayout)
+for (let i = 0; i < interiorBoxes.length; i++) {
+  const box = interiorBoxes[i]
+  if (box.y < 1.1 - 1e-9 || box.y + box.h > 7.4 + 1e-9) {
+    fail(`${box.name} leaves y [1.10, 7.40]`)
+  }
+  const outsideX = box.x < 3.1 - 1e-9 || box.x + box.w > 7.9 + 1e-9
+  if (outsideX && (box.y <= 3.1 || box.y + box.h >= 5.4)) {
+    fail(`${box.name} leaves the x-band without staying in the y-gap between markers`)
+  }
+  for (let k = 0; k < expandedMarkers.length; k++) {
+    if (boxesOverlap(box, expandedMarkers[k])) {
+      fail(`${box.name} intersects marker ${expandedMarkers[k].id} expanded by 0.25 in`)
+    }
+  }
+  for (let j = i + 1; j < interiorBoxes.length; j++) {
+    if (boxesOverlap(box, interiorBoxes[j])) fail(`${box.name} overlaps ${interiorBoxes[j].name}`)
+  }
+}
+
+const originA = {x: -outerAtFull[0].x * PRINT_S, y: 0}
+const originB = {x: TARGET_MM - outerAtFull[1].x * PRINT_S, y: 0}
 const twoTemplate = ref.twoReferenceDestinationMm(
   projectTemplateQuad(originA.x, originA.y, PRINT_S, projectYawed),
   projectTemplateQuad(originB.x, originB.y, PRINT_S, projectYawed),

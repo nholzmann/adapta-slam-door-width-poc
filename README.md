@@ -8,7 +8,7 @@ useful, on a phone with no app install and no LiDAR?
 - `RESEARCH.md` — verified integration findings and locked implementation decisions.
 - `index.html` / `app.js` — the SLAM tab (built by Grok Build, supervised from Claude Code).
 - `reference.html` / `reference.js` — the Reference tab: full-screen still photo, automatic card, Letter-sheet, or printed ArUco-template detection, press-and-slide points with a magnifier.
-- `template.html` / `template.js` — printable US Letter landscape sheet with four ARUCO_MIP_36h12 markers, a credit-card outline, and a 6 in bar. Print at 100 %.
+- `template.html` / `template.js` — printable US Letter landscape sheet (v2) with four ARUCO_MIP_36h12 markers, a credit-card outline, and a 6 in bar. Print at 100 %.
 - `TEST-PROTOCOL.md` — how testers measure real doors and record results.
 
 Two tabs: **SLAM** (`index.html`) uses 8th Wall absolute-scale tracking to measure a door from two floor taps.
