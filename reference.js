@@ -721,10 +721,20 @@ function bootReferenceApp() {
     if (els.cardReferenceButton) els.cardReferenceButton.disabled = locked
     if (els.letterReferenceButton) els.letterReferenceButton.disabled = locked
     if (phase === 'live') {
-      button.innerHTML = 'Capture'
-      // Stay tappable while the camera starts so iOS can grant getUserMedia
-      // from this tap. Vision still has to finish loading first.
-      button.disabled = !visionReady
+      if (visionReady) {
+        button.innerHTML = 'Capture'
+        // Stay tappable while the camera starts so iOS can grant getUserMedia
+        // from this tap. Vision has finished loading.
+        button.disabled = false
+      } else if (visionFailed) {
+        button.innerHTML = 'Vision failed'
+        button.disabled = true
+        // The strip is hidden on purpose. Open it so the load error is visible.
+        setStatusOpen(true)
+      } else {
+        button.innerHTML = 'Loading…'
+        button.disabled = true
+      }
     } else if (phase === 'adjust-card') {
       button.innerHTML = stackedLabel('Confirm', referenceNoun(false))
       button.disabled = false
@@ -2016,6 +2026,7 @@ function bootReferenceApp() {
       opencvScript.addEventListener('error', () => {
         visionFailed = true
         els.visionStatus.textContent = 'Vision library failed to load'
+        setPrimaryButton()
         logDiagnostic('opencv script error')
       })
     }
@@ -2028,6 +2039,7 @@ function bootReferenceApp() {
     }).catch((err) => {
       visionFailed = true
       els.visionStatus.textContent = 'Vision library failed to load'
+      setPrimaryButton()
       logDiagnostic(`OpenCV.js: ${errorMessage(err)}`)
     })
 
