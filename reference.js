@@ -28,13 +28,14 @@ const GUIDE_LONG_EDGE_PX = 150
 const STRAIGHTNESS_GAP_FRACTION = 0.06
 // Field failures: an 8-corner fit worse than 3 mm (was 2; a ~300 px card
 // extrapolated across the doorway is noisy), jamb lines opening more than
-// 3°, or a tap whose local scale is 1.5× the reference centre.
+// 3°, or a tap whose local scale is 1.3× the reference centre. 1.5 missed a
+// 36 in door that read 48.4 in with scale_ratio_a 1.468.
 const FIT_RMS_WARN_MM = 3
 const SCALE_DRIFT_WARN_TIGHT = 0.05
 const SCALE_DRIFT_WARN_LOOSE = 0.15
 const SCALE_DRIFT_LOOSE_PX = 400
 const LINES_ANGLE_WARN_DEG = 3
-const SCALE_RATIO_WARN = 1.5
+const SCALE_RATIO_WARN = 1.3
 const MARKER_RMS_WARN_MM = 1.5
 const PRINT_SCALE_AGREE = 0.01
 const PRINT_PAPER_BAND = 0.15
@@ -98,7 +99,8 @@ function customReference(longIn, shortIn) {
 function referenceToken(spec) {
   if (!spec || spec.name === 'card') return 'card'
   if (spec.name === 'letter') return 'letter'
-  if (spec.name === 'template') return 'template:letter-v1'
+  // The printable sheet is the v2 margin (0.85 in). Readings name that sheet.
+  if (spec.name === 'template') return 'template:letter-v2'
   const longIn = spec.longIn != null ? spec.longIn : spec.longMm / MM_PER_INCH
   const shortIn = spec.shortIn != null ? spec.shortIn : spec.shortMm / MM_PER_INCH
   const size = `${formatInchesToken(longIn)}x${formatInchesToken(shortIn)}`
@@ -668,7 +670,7 @@ function choosePrintScale(barIn, paperLongMm, paperShortMm) {
   return {printScale: null, source: 'none', status: 'unverified'}
 }
 
-const FLOOR_LIVE_INSTRUCTION = 'Lay a plain sheet of printer paper on the floor on the line between the jambs, long edge along the door. Step back so both jambs and the sheet are in view, then Capture.'
+const FLOOR_LIVE_INSTRUCTION = 'Lay a plain sheet of printer paper on the floor on the line between the jambs. Either orientation is fine. Step back so both jambs and the sheet are in view, then Capture.'
 const WALL_LIVE_INSTRUCTION = 'Hold a plain sheet of printer paper flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
 const NEED_POINTS_INSTRUCTION = 'Place both points before saving.'
@@ -735,26 +737,137 @@ function meanLongEdgePx(ordered) {
   return Math.max(pairA, pairB)
 }
 
-// Opposite-edge averages decide whether the reference's long side is the
-// top/bottom pair or the left/right pair. ref is {longMm, shortMm, name}.
-function referenceDestinationMm(ordered, ref) {
+function cross3(a, b) {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  }
+}
+
+function dot3(a, b) {
+  return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+// Zhang & He, "Whiteboard scanning and image enhancement", Digital Signal
+// Processing 17 (2007). Corners are TL, TR, BR, BL as orderCorners returns.
+// whRatio is the physical length of edge TL→TR over edge TL→BL.
+//
+// BR is opposite TL, so it is the auxiliary corner of the two pencils.
+// Using BL there instead makes n follow the diagonal and the ratio is not
+// an edge ratio. m_i = (x_i − u0, y_i − v0, 1), (u0, v0) = (W/2, H/2):
+//   k_tr = ((m_tl × m_br) · m_bl) / ((m_tr × m_br) · m_bl)
+//   k_bl = ((m_tl × m_br) · m_tr) / ((m_bl × m_br) · m_tr)
+//   n_tr = k_tr · m_tr − m_tl
+//   n_bl = k_bl · m_bl − m_tl
+// If focalPx is null and both |k − 1| > 1e-3 (neither edge pair is parallel
+// in the image, so both vanishing points are finite),
+//   f² = −(n_tr.x·n_bl.x + n_tr.y·n_bl.y) / (n_tr.z·n_bl.z)
+// Accept f only when f² > 0 and f ∈ [0.45, 1.6] × max(W, H). Otherwise
+//   f = 0.72 × max(W, H)
+// which is a phone main camera, about 70° horizontal. Then
+//   whRatio² = (n_tr.x² + n_tr.y² + n_tr.z²·f²) / (n_bl.x² + n_bl.y² + n_bl.z²·f²)
+// focalSource is 'given' when the caller passed focalPx, else 'estimated'
+// or 'fallback'. Null when the quad is degenerate.
+function rectangleAspectFromPerspective(cornersOrdered, imageW, imageH, focalPx) {
+  if (!cornersOrdered || cornersOrdered.length !== 4) return null
+  if (!(imageW > 0) || !(imageH > 0)) return null
+  if (!Number.isFinite(imageW) || !Number.isFinite(imageH)) return null
+  const u0 = imageW / 2
+  const v0 = imageH / 2
+  const m = []
+  for (let i = 0; i < 4; i++) {
+    const corner = cornersOrdered[i]
+    if (!corner || !Number.isFinite(corner.x) || !Number.isFinite(corner.y)) return null
+    m.push({x: corner.x - u0, y: corner.y - v0, z: 1})
+  }
+  const mTl = m[0]
+  const mTr = m[1]
+  const mBr = m[2]
+  const mBl = m[3]
+  function triple(a, b, c) {
+    return dot3(cross3(a, b), c)
+  }
+  const denTr = triple(mTr, mBr, mBl)
+  const denBl = triple(mBl, mBr, mTr)
+  if (Math.abs(denTr) < 1e-9 || Math.abs(denBl) < 1e-9) return null
+  const kTr = triple(mTl, mBr, mBl) / denTr
+  const kBl = triple(mTl, mBr, mTr) / denBl
+  if (!Number.isFinite(kTr) || !Number.isFinite(kBl)) return null
+  const nTr = {
+    x: kTr * mTr.x - mTl.x,
+    y: kTr * mTr.y - mTl.y,
+    z: kTr * mTr.z - mTl.z,
+  }
+  const nBl = {
+    x: kBl * mBl.x - mTl.x,
+    y: kBl * mBl.y - mTl.y,
+    z: kBl * mBl.z - mTl.z,
+  }
+  const maxSide = Math.max(imageW, imageH)
+  let fUsed = focalPx
+  let focalSource = 'given'
+  const supplied = focalPx > 0 && Number.isFinite(focalPx)
+  if (!supplied) {
+    fUsed = 0.72 * maxSide
+    focalSource = 'fallback'
+    const bothConverge = Math.abs(kTr - 1) > 1e-3 && Math.abs(kBl - 1) > 1e-3
+    const zDen = nTr.z * nBl.z
+    if (bothConverge && Math.abs(zDen) > 1e-12) {
+      const f2 = -(nTr.x * nBl.x + nTr.y * nBl.y) / zDen
+      if (f2 > 0 && Number.isFinite(f2)) {
+        const fEst = Math.sqrt(f2)
+        if (fEst >= 0.45 * maxSide && fEst <= 1.6 * maxSide) {
+          fUsed = fEst
+          focalSource = 'estimated'
+        }
+      }
+    }
+  }
+  if (!(fUsed > 0) || !Number.isFinite(fUsed)) return null
+  const f2Used = fUsed * fUsed
+  const num = nTr.x * nTr.x + nTr.y * nTr.y + nTr.z * nTr.z * f2Used
+  const den = nBl.x * nBl.x + nBl.y * nBl.y + nBl.z * nBl.z * f2Used
+  if (!(num > 0) || !(den > 0) || !Number.isFinite(num) || !Number.isFinite(den)) return null
+  const whRatio = Math.sqrt(num / den)
+  if (!(whRatio > 0) || !Number.isFinite(whRatio)) return null
+  return {ratio: whRatio, focalPx: fUsed, focalSource: focalSource}
+}
+
+// Pair A (edges 0–1 and 2–3, TL–TR and BR–BL) is the long side when the
+// perspective ratio is closer in log space to long/short than to short/long.
+// Pixel length is only the fallback when the aspect cannot be recovered
+// (no image size, or a degenerate quad). imageW/imageH omitted keeps the
+// old rule, which is what isoDestinationMm and the early self-checks use.
+function referenceDestinationMm(ordered, ref, imageW, imageH, focalPx) {
   const spec = ref || CARD_REF
   const pairA = (edgeLength(ordered[0], ordered[1]) + edgeLength(ordered[2], ordered[3])) / 2
   const pairB = (edgeLength(ordered[1], ordered[2]) + edgeLength(ordered[3], ordered[0])) / 2
-  if (pairA >= pairB) {
-    return [
+  let pairAIsLong = pairA >= pairB
+  let aspect = null
+  if (imageW > 0 && imageH > 0) {
+    aspect = rectangleAspectFromPerspective(ordered, imageW, imageH, focalPx == null ? null : focalPx)
+    if (aspect && aspect.ratio > 0 && spec.ratio > 0) {
+      const wh = aspect.ratio
+      const r = spec.ratio
+      pairAIsLong = Math.abs(Math.log(wh / r)) < Math.abs(Math.log(wh * r))
+    }
+  }
+  const dst = pairAIsLong
+    ? [
       point(0, 0),
       point(spec.longMm, 0),
       point(spec.longMm, spec.shortMm),
       point(0, spec.shortMm),
     ]
-  }
-  return [
-    point(0, 0),
-    point(spec.shortMm, 0),
-    point(spec.shortMm, spec.longMm),
-    point(0, spec.longMm),
-  ]
+    : [
+      point(0, 0),
+      point(spec.shortMm, 0),
+      point(spec.shortMm, spec.longMm),
+      point(0, spec.longMm),
+    ]
+  dst.aspect = aspect
+  return dst
 }
 
 function isoDestinationMm(ordered) {
@@ -1272,22 +1385,62 @@ function parabolaMinimum(x1, y1, x2, y2, x3, y3) {
 
 const ORIENTATION_CHOICES = ['long-across', 'short-across']
 
-// Door-edge / jamb-edge in the image, versus the ratio that orientation
-// predicts. A 90° swap of both cards is an anisotropic scale of the plane,
-// so it is also a homography: pixel RMS and scale drift both tie, and this
-// is what separates the true width from the 85.60/53.98 stretch.
-function orientationAspectPenalty(slots, spec, orient) {
+// Slots are outerLow, outerHigh, innerLow, innerHigh. Door edges are the
+// outer-to-inner pair; jamb edges are the outer pair and the inner pair.
+function nearestSlotIndex(slots, p) {
+  let best = -1
+  let bestD = 0.5
+  for (let i = 0; i < slots.length; i++) {
+    const d = Math.hypot(slots[i].x - p.x, slots[i].y - p.y)
+    if (d <= bestD) {
+      bestD = d
+      best = i
+    }
+  }
+  return best
+}
+
+function slotPairKind(slots, a, b) {
+  const ia = nearestSlotIndex(slots, a)
+  const ib = nearestSlotIndex(slots, b)
+  if (ia < 0 || ib < 0 || ia === ib) return null
+  const lo = ia < ib ? ia : ib
+  const hi = ia < ib ? ib : ia
+  if ((lo === 0 && hi === 2) || (lo === 1 && hi === 3)) return 'door'
+  if ((lo === 0 && hi === 1) || (lo === 2 && hi === 3)) return 'jamb'
+  return null
+}
+
+// Door-edge / jamb-edge, versus the ratio that orientation predicts.
+// A 90° swap of both cards is an anisotropic scale of the plane, so it is
+// also a homography: pixel RMS and scale drift both tie. The separating
+// term is |log(whRatio / predicted)|, where whRatio is the perspective
+// length of the door edge over the jamb edge. Pixel length is the fallback
+// when the aspect cannot be recovered.
+function orientationAspectPenalty(slots, spec, orient, imageW, imageH) {
+  const predicted = orient === 'short-across' ? spec.shortMm / spec.longMm : spec.longMm / spec.shortMm
+  if (!(predicted > 0)) return Infinity
+  const ordered = orderCorners(slots)
+  const aspect = rectangleAspectFromPerspective(ordered, imageW, imageH, null)
+  if (aspect && aspect.ratio > 0) {
+    const topKind = slotPairKind(slots, ordered[0], ordered[1])
+    const sideKind = slotPairKind(slots, ordered[0], ordered[3])
+    let doorOverJamb = null
+    if (topKind === 'door' && sideKind === 'jamb') doorOverJamb = aspect.ratio
+    else if (topKind === 'jamb' && sideKind === 'door') doorOverJamb = 1 / aspect.ratio
+    if (doorOverJamb > 0 && Number.isFinite(doorOverJamb)) {
+      return Math.abs(Math.log(doorOverJamb / predicted))
+    }
+  }
   const jamb = (edgeLength(slots[0], slots[1]) + edgeLength(slots[2], slots[3])) / 2
   const door = (edgeLength(slots[0], slots[2]) + edgeLength(slots[1], slots[3])) / 2
   if (!(jamb > 1e-6) || !(door > 0)) return Infinity
-  const predicted = orient === 'short-across' ? spec.shortMm / spec.longMm : spec.longMm / spec.shortMm
-  if (!(predicted > 0)) return Infinity
   return Math.abs(Math.log((door / jamb) / predicted))
 }
 
 // Lowest final 8-corner pixel RMS wins. A near-tie breaks on |scaleDrift − 1|.
 // If those also tie, the image edge ratio picks the orientation.
-function preferOrientFit(candidate, incumbent, slotsA, slotsB, spec) {
+function preferOrientFit(candidate, incumbent, slotsA, slotsB, spec, imageW, imageH) {
   if (!incumbent) return true
   const gap = candidate.rmsPx - incumbent.rmsPx
   if (gap < -1e-4) return true
@@ -1299,10 +1452,10 @@ function preferOrientFit(candidate, incumbent, slotsA, slotsB, spec) {
     if (candDrift > incDrift + 1e-4) return false
   } else if (!Number.isFinite(incDrift)) return true
   else return false
-  const candAspect = orientationAspectPenalty(slotsA, spec, candidate.orientA)
-    + orientationAspectPenalty(slotsB, spec, candidate.orientB)
-  const incAspect = orientationAspectPenalty(slotsA, spec, incumbent.orientA)
-    + orientationAspectPenalty(slotsB, spec, incumbent.orientB)
+  const candAspect = orientationAspectPenalty(slotsA, spec, candidate.orientA, imageW, imageH)
+    + orientationAspectPenalty(slotsB, spec, candidate.orientB, imageW, imageH)
+  const incAspect = orientationAspectPenalty(slotsA, spec, incumbent.orientA, imageW, imageH)
+    + orientationAspectPenalty(slotsB, spec, incumbent.orientB, imageW, imageH)
   return candAspect < incAspect
 }
 
@@ -1440,7 +1593,13 @@ function fitTwoReferenceOrientation(slotsA, slotsB, spec, which, orientA, orient
 // across the doorway. The four combinations each run the W search; the
 // lowest 8-corner pixel reprojection wins. The reported width is the mean
 // of the four endpoint-to-other-line distances under that H, not a chord.
-function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
+function cornerAspect(corners, imageW, imageH) {
+  if (!corners || corners.length !== 4) return null
+  if (!(imageW > 0) || !(imageH > 0)) return null
+  return rectangleAspectFromPerspective(orderCorners(corners), imageW, imageH, null)
+}
+
+function twoReferenceDestinationMm(cornersA, cornersB, ref, mode, imageW, imageH) {
   const spec = ref || CARD_REF
   const which = mode === 'wall' ? 'wall' : 'floor'
   if (!cornersA || !cornersB || cornersA.length !== 4 || cornersB.length !== 4) return null
@@ -1465,19 +1624,21 @@ function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
         ORIENTATION_CHOICES[j]
       )
       if (!fit) continue
-      if (preferOrientFit(fit, chosen, slotsA, slotsB, spec)) chosen = fit
+      if (preferOrientFit(fit, chosen, slotsA, slotsB, spec, imageW, imageH)) chosen = fit
     }
   }
   if (!chosen) return null
   chosen.refAPx = meanLongEdgePx(orderCorners(cornersA))
   chosen.refBPx = meanLongEdgePx(orderCorners(cornersB))
+  chosen.aspectA = cornerAspect(cornersA, imageW, imageH)
+  chosen.aspectB = cornerAspect(cornersB, imageW, imageH)
   return chosen
 }
 
-function homographyPixelsToMm(pixelCorners, ref) {
+function homographyPixelsToMm(pixelCorners, ref, imageW, imageH, focalPx) {
   if (!pixelCorners || pixelCorners.length !== 4) return null
   const ordered = orderCorners(pixelCorners)
-  const dst = referenceDestinationMm(ordered, ref || CARD_REF)
+  const dst = referenceDestinationMm(ordered, ref || CARD_REF, imageW, imageH, focalPx)
   let H = null
   if (typeof cv !== 'undefined' && cv && typeof cv.getPerspectiveTransform === 'function') {
     try {
@@ -1492,6 +1653,7 @@ function homographyPixelsToMm(pixelCorners, ref) {
     ordered,
     H,
     cardLongPx: meanLongEdgePx(ordered),
+    aspect: dst.aspect || null,
   }
 }
 
@@ -1690,6 +1852,7 @@ if (typeof module !== 'undefined' && module.exports) {
     orderCorners,
     isoDestinationMm,
     referenceDestinationMm,
+    rectangleAspectFromPerspective,
     meanLongEdgePx,
     solveHomography,
     solveHomographyLeastSquares,
@@ -1774,6 +1937,15 @@ function bootReferenceApp() {
   let refBDetect = 'manual'
   let refAStrategy = 'manual'
   let refBStrategy = 'manual'
+  let pendingUsesTemplate = false
+  let pendingAutoMarkers = 'n'
+  let refAUsesTemplate = false
+  let adjustNoun = null
+  let readingUsesTemplate = false
+  let readingAutoMarkers = 'n'
+  let readingSpec = null
+  let readingAspect = null
+  let readingAspectB = null
   let detectKind = 'manual'
   let detectStrategy = 'manual'
   let homography = null
@@ -1885,9 +2057,13 @@ function bootReferenceApp() {
   }
 
   // Spoken noun in prompts. Paper presets are a sheet; only the card is a card.
+  // adjustNoun overrides the picker for the quad currently on screen: a
+  // detected template, or a template picker that fell back to plain Letter.
   function referenceNoun(capitalized) {
     let word = 'sheet'
-    if (referenceKind === 'card') word = 'card'
+    if (adjustNoun === 'template') word = 'template'
+    else if (adjustNoun === 'sheet') word = 'sheet'
+    else if (referenceKind === 'card') word = 'card'
     else if (referenceKind === 'template') word = 'template'
     else if (referenceKind === 'custom') word = 'reference'
     if (!capitalized) return word
@@ -2562,7 +2738,7 @@ function bootReferenceApp() {
   }
 
   function printScaleMeta() {
-    if (referenceKind !== 'template') return ''
+    if (!readingUsesTemplate) return ''
     if (templatePrintSource === 'none' || templatePrintStatus === 'unverified' || !(templatePrintScaleValue > 0)) {
       return 'print unverified'
     }
@@ -2570,7 +2746,7 @@ function bootReferenceApp() {
   }
 
   function templateFields() {
-    if (referenceKind !== 'template') {
+    if (!readingUsesTemplate) {
       return {
         printScale: null,
         printScaleSource: 'none',
@@ -2620,11 +2796,64 @@ function bootReferenceApp() {
     drawMarks()
   }
 
+  // Long/short, so Letter stays near 1.29 whichever edge is TL→TR.
+  function recordedAspect(aspect) {
+    if (!aspect || !(aspect.ratio > 0) || !Number.isFinite(aspect.ratio)) {
+      return {aspectRatioEst: null, focalSource: 'none', text: 'aspect none'}
+    }
+    const est = aspect.ratio >= 1 ? aspect.ratio : 1 / aspect.ratio
+    const source = aspect.focalSource || 'none'
+    return {
+      aspectRatioEst: est,
+      focalSource: source,
+      text: `aspect ${est.toFixed(2)} ${source}`,
+    }
+  }
+
+  function readingAspectFields() {
+    const primary = recordedAspect(readingAspect)
+    const second = recordedAspect(readingAspectB)
+    let text = primary.text
+    if (readingAspectB && second.aspectRatioEst != null && primary.aspectRatioEst != null) {
+      const source = primary.focalSource === second.focalSource
+        ? primary.focalSource
+        : `${primary.focalSource}/${second.focalSource}`
+      text = `aspect ${primary.aspectRatioEst.toFixed(2)}/${second.aspectRatioEst.toFixed(2)} ${source}`
+    } else if (primary.aspectRatioEst == null && second.aspectRatioEst != null) {
+      return {
+        aspectRatioEst: second.aspectRatioEst,
+        focalSource: second.focalSource,
+        text: second.text,
+        autoMarkers: readingAutoMarkers === 'y' ? 'y' : 'n',
+      }
+    }
+    return {
+      aspectRatioEst: primary.aspectRatioEst,
+      focalSource: primary.focalSource,
+      text: text,
+      autoMarkers: readingAutoMarkers === 'y' ? 'y' : 'n',
+    }
+  }
+
+  function placedSpec(usesTemplate) {
+    if (usesTemplate) return templateReference(templatePrintScaleValue)
+    if (referenceKind === 'template') return LETTER_REF
+    return currentReference()
+  }
+
+  function armReading(usesTemplate) {
+    readingUsesTemplate = !!usesTemplate
+    readingAutoMarkers = usesTemplate ? 'y' : 'n'
+    readingSpec = placedSpec(usesTemplate)
+  }
+
   function baseReading(extra) {
+    const spec = readingSpec || currentReference()
     const reading = {
       mode,
       layout: twoRefLayout() ? '2refs' : '1ref',
-      reference: referenceToken(currentReference()),
+      reference: referenceToken(spec),
+      autoMarkers: readingAutoMarkers === 'y' ? 'y' : 'n',
       imageW: captureWidth,
       imageH: captureHeight,
       beta: captureBeta,
@@ -2664,6 +2893,7 @@ function bootReferenceApp() {
     const extra = templateFields()
     const printBit = printScaleMeta()
     const printClause = printBit ? ` · ${printBit}` : ''
+    const aspectInfo = readingAspectFields()
     const reading = baseReading({
       mm: sep.widthMm,
       inches,
@@ -2692,7 +2922,10 @@ function bootReferenceApp() {
       markersFound: extra.markersFound,
       markerRmsMm: extra.markerRmsMm,
       warningFlat: extra.warningFlat,
-      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · axis ${formatAngle(angle)} · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      aspectRatioEst: aspectInfo.aspectRatioEst,
+      focalSource: aspectInfo.focalSource,
+      autoMarkers: aspectInfo.autoMarkers,
+      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · axis ${formatAngle(angle)} · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)} · ${aspectInfo.text}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
   }
@@ -2711,6 +2944,7 @@ function bootReferenceApp() {
     const extra = templateFields()
     const printBit = printScaleMeta()
     const printClause = printBit ? ` · ${printBit}` : ''
+    const aspectInfo = readingAspectFields()
     const reading = baseReading({
       mm: measured.widthMm,
       inches,
@@ -2739,7 +2973,10 @@ function bootReferenceApp() {
       markersFound: extra.markersFound,
       markerRmsMm: extra.markerRmsMm,
       warningFlat: extra.warningFlat,
-      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      aspectRatioEst: aspectInfo.aspectRatioEst,
+      focalSource: aspectInfo.focalSource,
+      autoMarkers: aspectInfo.autoMarkers,
+      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${aspectInfo.text}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
     const smallA = measured.refAPx < SMALL_CARD_PX
@@ -3388,49 +3625,19 @@ function bootReferenceApp() {
     }
   }
 
-  function placeCardAtTap(tapX, tapY) {
-    if (referenceKind === 'template') {
-      let found = null
-      try {
-        found = detectTemplate(tapX, tapY)
-      } catch (err) {
-        logDiagnostic(`detectTemplate threw: ${errorMessage(err)}`)
-        found = null
-      }
-      applyTemplateDetection(found && found.ok ? found : null)
-      if (found && found.ok && found.cardCorners && found.cardCorners.length === 4) {
-        cardCorners = found.cardCorners
-        originalCorners = found.cardCorners.map(copyPoint)
-        detectKind = 'auto'
-        detectStrategy = `markers${found.markersFound}`
-        const longPx = meanLongEdgePx(orderCorners(cardCorners))
-        logDiagnostic(`auto-detected template via ${detectStrategy}: long edge ${Math.round(longPx)} px`)
-        showTemporaryInstruction(
-          `${referenceNoun(true)} found — check the outer marker corners, then Confirm`,
-          DETECT_MESSAGE_HOLD_MS,
-          'ok'
-        )
-      } else {
-        cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight, currentReference())
-        originalCorners = cardCorners.map(copyPoint)
-        detectKind = 'manual'
-        detectStrategy = 'manual'
-        const reason = found && found.reason ? found.reason : 'none'
-        logDiagnostic(`auto-detect template failed (${reason})`)
-        showTemporaryInstruction(
-          'Template not found — drag the corners onto the outer marker corners',
-          DETECT_MESSAGE_HOLD_MS
-        )
-      }
-      phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
-      setPrimaryButton()
-      renderInstruction()
-      drawMarks()
-      return
-    }
+  function finishPlacedQuad() {
+    phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
+    setPrimaryButton()
+    renderInstruction()
+    drawMarks()
+  }
+
+  // Plain-paper quad. flashOverride replaces the found/miss line, used when
+  // a template picker had no markers and this sheet is plain Letter.
+  function placePlainQuad(tapX, tapY, spec, flashOverride) {
     let found = null
     try {
-      found = detectCard(tapX, tapY)
+      found = detectCard(tapX, tapY, {spec: spec})
     } catch (err) {
       logDiagnostic(`detect threw: ${errorMessage(err)}`)
       found = null
@@ -3443,27 +3650,75 @@ function bootReferenceApp() {
       detectStrategy = found.strategy || 'manual'
       const longPx = meanLongEdgePx(orderCorners(cardCorners))
       logDiagnostic(`auto-detected via ${detectStrategy}: long edge ${Math.round(longPx)} px`)
-      showTemporaryInstruction(
-        `${referenceNoun(true)} found — check the corners, then Confirm`,
-        DETECT_MESSAGE_HOLD_MS,
-        'ok'
-      )
+      if (!flashOverride) {
+        showTemporaryInstruction(
+          `${referenceNoun(true)} found — check the corners, then Confirm`,
+          DETECT_MESSAGE_HOLD_MS,
+          'ok'
+        )
+      }
     } else {
-      cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight, currentReference())
+      cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight, spec)
       originalCorners = cardCorners.map(copyPoint)
       detectKind = 'manual'
       detectStrategy = 'manual'
       const tried = found && found.tried && found.tried.length ? found.tried.join(', ') : 'none'
       logDiagnostic(`auto-detect failed (tried: ${tried})`)
-      showTemporaryInstruction(
-        `${referenceNoun(true)} not found — drag the corners onto its edges`,
-        DETECT_MESSAGE_HOLD_MS
-      )
+      if (!flashOverride) {
+        showTemporaryInstruction(
+          `${referenceNoun(true)} not found — drag the corners onto its edges`,
+          DETECT_MESSAGE_HOLD_MS
+        )
+      }
     }
-    phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
-    setPrimaryButton()
-    renderInstruction()
-    drawMarks()
+    if (flashOverride) showTemporaryInstruction(flashOverride, DETECT_MESSAGE_HOLD_MS)
+    finishPlacedQuad()
+  }
+
+  function placeCardAtTap(tapX, tapY) {
+    const started = performance.now()
+    let markers = null
+    try {
+      markers = detectTemplate(tapX, tapY)
+    } catch (err) {
+      logDiagnostic(`detectTemplate threw: ${errorMessage(err)}`)
+      markers = null
+    }
+    logDiagnostic(`markers: detectTemplate ${Math.round(performance.now() - started)} ms`)
+    const markerHit = markers && markers.ok && markers.markersFound >= 2
+      && markers.cardCorners && markers.cardCorners.length === 4
+    if (markerHit) {
+      applyTemplateDetection(markers)
+      pendingUsesTemplate = true
+      pendingAutoMarkers = 'y'
+      adjustNoun = 'template'
+      cardCorners = markers.cardCorners
+      originalCorners = cardCorners.map(copyPoint)
+      detectKind = 'auto'
+      detectStrategy = `markers${markers.markersFound}`
+      const longPx = meanLongEdgePx(orderCorners(cardCorners))
+      logDiagnostic(`markers: auto-upgrade from ${referenceKind}`)
+      logDiagnostic(`auto-detected template via ${detectStrategy}: long edge ${Math.round(longPx)} px`)
+      showTemporaryInstruction(
+        'Printed template detected — check the outer marker corners, then Confirm',
+        DETECT_MESSAGE_HOLD_MS,
+        'ok'
+      )
+      finishPlacedQuad()
+      return
+    }
+    pendingUsesTemplate = false
+    pendingAutoMarkers = 'n'
+    // Keep a template scale already recovered for the other reference.
+    if (!refAUsesTemplate) applyTemplateDetection(null)
+    if (referenceKind === 'template') {
+      adjustNoun = 'sheet'
+      logDiagnostic('markers: no markers found — treating as plain Letter paper')
+      placePlainQuad(tapX, tapY, LETTER_REF, 'No markers found — treating as plain Letter paper')
+      return
+    }
+    adjustNoun = null
+    placePlainQuad(tapX, tapY, currentReference(), null)
   }
 
   function smallReferenceNote(longPx) {
@@ -3477,7 +3732,9 @@ function bootReferenceApp() {
       return
     }
     const dragged = detectIsManual()
-    const result = homographyPixelsToMm(cardCorners, currentReference())
+    const usesTemplate = pendingUsesTemplate
+    const spec = placedSpec(twoRefLayout() && refACorners ? refAUsesTemplate : usesTemplate)
+    const result = homographyPixelsToMm(cardCorners, spec, captureWidth, captureHeight)
     if (!result || !result.H) {
       showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
@@ -3491,14 +3748,17 @@ function bootReferenceApp() {
       refACorners = ordered
       refADetect = kind
       refAStrategy = strategy
+      refAUsesTemplate = usesTemplate
       cardCorners = null
       originalCorners = null
       detectKind = 'manual'
       detectStrategy = 'manual'
       homography = null
+      const smallNote = longPx < SMALL_CARD_PX ? smallReferenceNote(longPx) : ''
+      adjustNoun = null
       phase = 'need-card-b'
       setPrimaryButton()
-      if (longPx < SMALL_CARD_PX) showTemporaryInstruction(smallReferenceNote(longPx), MESSAGE_HOLD_MS)
+      if (smallNote) showTemporaryInstruction(smallNote, MESSAGE_HOLD_MS)
       else {
         instructionHoldUntil = 0
         renderInstruction()
@@ -3507,9 +3767,20 @@ function bootReferenceApp() {
       return
     }
     if (twoRefLayout()) {
+      if (refAUsesTemplate !== usesTemplate) {
+        logDiagnostic('markers: refs disagree on markers — fitting with the first reference')
+      }
+      armReading(refAUsesTemplate)
       refBDetect = kind
       refBStrategy = strategy
-      const measured = twoReferenceDestinationMm(refACorners, ordered, currentReference(), mode)
+      const measured = twoReferenceDestinationMm(
+        refACorners,
+        ordered,
+        readingSpec,
+        mode,
+        captureWidth,
+        captureHeight
+      )
       if (!measured) {
         cardCorners = ordered
         phase = 'adjust-card-b'
@@ -3520,17 +3791,25 @@ function bootReferenceApp() {
       refBCorners = ordered
       cardCorners = null
       originalCorners = null
+      readingAspect = measured.aspectA || null
+      readingAspectB = measured.aspectB || null
+      adjustNoun = null
       const detect = refADetect === 'manual' || refBDetect === 'manual' ? 'manual' : 'auto'
       finishTwoRef(measured, detect, `${refAStrategy}+${refBStrategy}`)
       return
     }
+    armReading(usesTemplate)
+    readingAspect = result.aspect || null
+    readingAspectB = null
     homography = result.H
     cardCorners = ordered
     cardLongPx = longPx
     detectKind = kind
+    const smallNote = longPx < SMALL_CARD_PX ? smallReferenceNote(longPx) : ''
+    adjustNoun = null
     phase = 'point-a'
     setPrimaryButton()
-    if (longPx < SMALL_CARD_PX) showTemporaryInstruction(smallReferenceNote(longPx), MESSAGE_HOLD_MS)
+    if (smallNote) showTemporaryInstruction(smallNote, MESSAGE_HOLD_MS)
     else {
       instructionHoldUntil = 0
       renderInstruction()
@@ -3669,6 +3948,18 @@ function bootReferenceApp() {
     templateMeta = null
   }
 
+  function clearMarkerFlags() {
+    pendingUsesTemplate = false
+    pendingAutoMarkers = 'n'
+    refAUsesTemplate = false
+    adjustNoun = null
+    readingUsesTemplate = false
+    readingAutoMarkers = 'n'
+    readingSpec = null
+    readingAspect = null
+    readingAspectB = null
+  }
+
   function clearCaptureGeometry() {
     cardCorners = null
     originalCorners = null
@@ -3684,6 +3975,7 @@ function bootReferenceApp() {
     cardLongPx = 0
     points = {a: null, b: null}
     currentReading = null
+    clearMarkerFlags()
     resetTemplateScale()
   }
 
@@ -3748,6 +4040,7 @@ function bootReferenceApp() {
       homography = null
       cardLongPx = 0
       currentReading = null
+      clearMarkerFlags()
       clearResultText()
       phase = 'need-card-tap'
       instructionHoldUntil = 0
@@ -3857,6 +4150,9 @@ function bootReferenceApp() {
       'print_scale_source',
       'markers_found',
       'marker_rms_mm',
+      'auto_markers',
+      'aspect_ratio_est',
+      'focal_source',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
       const reading = measurements[i]
@@ -3890,6 +4186,9 @@ function bootReferenceApp() {
         reading.printScaleSource || 'none',
         tsvNumber(reading.markersFound, 0),
         tsvNumber(reading.markerRmsMm, 2),
+        reading.autoMarkers === 'y' ? 'y' : 'n',
+        tsvNumber(reading.aspectRatioEst, 2),
+        reading.focalSource || 'none',
       ].join('\t'))
     }
     return `${lines.join('\n')}\n`
@@ -3971,6 +4270,9 @@ function bootReferenceApp() {
       printScaleSource: currentReading.printScaleSource,
       markersFound: currentReading.markersFound,
       markerRmsMm: currentReading.markerRmsMm,
+      autoMarkers: currentReading.autoMarkers === 'y' ? 'y' : 'n',
+      aspectRatioEst: currentReading.aspectRatioEst,
+      focalSource: currentReading.focalSource || 'none',
     })
     renderList()
     els.logButton.innerHTML = 'Saved'
