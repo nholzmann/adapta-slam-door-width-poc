@@ -38,9 +38,12 @@ const LINES_ANGLE_WARN_DEG = 3
 const SCALE_RATIO_WARN = 1.3
 const MARKER_RMS_WARN_MM = 1.5
 const PRINT_SCALE_AGREE = 0.01
+const PRINT_SCALE_REMEMBER_SHIFT = 0.015
 const PRINT_PAPER_BAND = 0.15
 const TEMPLATE_DETECT_MAX_SIDE = 1800
 const TEMPLATE_FLAT_WARNING = 'Template is not flat or is printed unevenly.'
+const PRINT_SCALE_UNVERIFIED_WARNING = 'Print scale unverified — home printers often shrink to ~97 %. Tape the 6 in bar on your printout and enter it under Reference › Bar measured, or photograph the sheet on a darker surface so the paper edge can be found.'
+const PRINT_SCALE_NUDGE = 'Measure the printed 6 in bar once and enter it — it corrects every reading.'
 // 1-ref: taps this far off the sheet's edge direction are not a clean
 // perpendicular. The raw chord stays on screen so the tester can compare.
 const AXIS_ANGLE_WARN_DEG = 12
@@ -1916,8 +1919,11 @@ function bootReferenceApp() {
   let templatePrintScaleValue = 1
   let templatePrintSource = 'none'
   let templatePrintStatus = 'unverified'
+  let templatePrintRemembered = false
   let templateBarIn = TEMPLATE_LETTER_V1.barIn
   let templateMeta = null
+  let sessionPrintScale = null
+  let printScaleNudgeShown = false
   let cameraStream = null
   let cameraReady = false
   let cameraDenied = false
@@ -1989,6 +1995,8 @@ function bootReferenceApp() {
     els.customShortIn = document.getElementById('customShortIn')
     els.customApplyButton = document.getElementById('customApplyButton')
     els.templateBarIn = document.getElementById('templateBarIn')
+    els.templateBarInRow = document.getElementById('templateBarInRow')
+    els.printScaleCurrent = document.getElementById('printScaleCurrent')
     els.captureButton = document.getElementById('captureButton')
     els.resetPointsButton = document.getElementById('resetPointsButton')
     els.logButton = document.getElementById('logButton')
@@ -2392,11 +2400,53 @@ function bootReferenceApp() {
     logDiagnostic(`reference ${referenceToken(currentReference())}`)
   }
 
-  function readTemplateBarField() {
-    if (!els.templateBarIn) return
-    const value = Number(String(els.templateBarIn.value).trim())
+  function templateBarFields() {
+    const fields = []
+    if (els.templateBarIn) fields.push(els.templateBarIn)
+    if (els.templateBarInRow) fields.push(els.templateBarInRow)
+    return fields
+  }
+
+  function readTemplateBarField(fromEl) {
+    const fields = templateBarFields()
+    if (fields.length === 0) return
+    let source = fromEl || fields[0]
+    if (!fromEl) {
+      for (let i = 0; i < fields.length; i++) {
+        const value = Number(String(fields[i].value).trim())
+        if (value > 0 && Number.isFinite(value) && value < 40
+            && Math.abs(value - TEMPLATE_LETTER_V1.barIn) > 1e-6) {
+          source = fields[i]
+          break
+        }
+      }
+    }
+    const value = Number(String(source.value).trim())
     if (value > 0 && Number.isFinite(value) && value < 40) templateBarIn = value
     else templateBarIn = TEMPLATE_LETTER_V1.barIn
+    for (let i = 0; i < fields.length; i++) {
+      if (fields[i] === source) continue
+      fields[i].value = source.value
+    }
+  }
+
+  function renderPrintScaleCurrent() {
+    const el = els.printScaleCurrent
+    if (!el) return
+    if (!sessionPrintScale || !(sessionPrintScale.value > 0)) {
+      el.textContent = ''
+      el.setAttribute('hidden', '')
+      return
+    }
+    el.textContent = `current: ×${sessionPrintScale.value.toFixed(3)} (${sessionPrintScale.source})`
+    el.removeAttribute('hidden')
+  }
+
+  function rememberSessionPrintScale(value, source) {
+    if (!(value > 0) || !Number.isFinite(value)) return
+    if (source !== 'paper' && source !== 'bar') return
+    sessionPrintScale = {value, source, at: Date.now()}
+    renderPrintScaleCurrent()
   }
 
   function applyCustomReference() {
@@ -2734,6 +2784,7 @@ function bootReferenceApp() {
     if (reading.warningAxis) lines.push(AXIS_MISALIGN_WARNING)
     if (reading.warningScale) lines.push(SCALE_WARNING)
     if (reading.warningFlat) lines.push(TEMPLATE_FLAT_WARNING)
+    if (reading.warningPrintScale) lines.push(PRINT_SCALE_UNVERIFIED_WARNING)
     return lines
   }
 
@@ -2741,6 +2792,9 @@ function bootReferenceApp() {
     if (!readingUsesTemplate) return ''
     if (templatePrintSource === 'none' || templatePrintStatus === 'unverified' || !(templatePrintScaleValue > 0)) {
       return 'print unverified'
+    }
+    if (templatePrintRemembered || templatePrintSource === 'paper-remembered') {
+      return `print ×${templatePrintScaleValue.toFixed(3)} (remembered)`
     }
     return `print ×${templatePrintScaleValue.toFixed(2)} (${templatePrintSource})`
   }
@@ -2753,6 +2807,7 @@ function bootReferenceApp() {
         markersFound: null,
         markerRmsMm: null,
         warningFlat: false,
+        warningPrintScale: false,
       }
     }
     const rms = templateMeta && templateMeta.markerRmsMm
@@ -2762,6 +2817,7 @@ function bootReferenceApp() {
       markersFound: templateMeta ? templateMeta.markersFound : null,
       markerRmsMm: rms,
       warningFlat: rms != null && rms > MARKER_RMS_WARN_MM,
+      warningPrintScale: templatePrintSource === 'none',
     }
   }
 
@@ -2922,6 +2978,7 @@ function bootReferenceApp() {
       markersFound: extra.markersFound,
       markerRmsMm: extra.markerRmsMm,
       warningFlat: extra.warningFlat,
+      warningPrintScale: extra.warningPrintScale,
       aspectRatioEst: aspectInfo.aspectRatioEst,
       focalSource: aspectInfo.focalSource,
       autoMarkers: aspectInfo.autoMarkers,
@@ -2973,6 +3030,7 @@ function bootReferenceApp() {
       markersFound: extra.markersFound,
       markerRmsMm: extra.markerRmsMm,
       warningFlat: extra.warningFlat,
+      warningPrintScale: extra.warningPrintScale,
       aspectRatioEst: aspectInfo.aspectRatioEst,
       focalSource: aspectInfo.focalSource,
       autoMarkers: aspectInfo.autoMarkers,
@@ -3593,7 +3651,6 @@ function bootReferenceApp() {
       paper ? paper.longMm : null,
       paper ? paper.shortMm : null
     )
-    logDiagnostic(`print_scale ${chosen.status === 'unverified' ? 'unverified' : Number(chosen.printScale).toFixed(4)} source=${chosen.source}`)
     return {
       ok: true,
       cardCorners: built.cardCorners,
@@ -3605,24 +3662,58 @@ function bootReferenceApp() {
     }
   }
 
+  function applyResolvedPrintScale(chosen) {
+    templatePrintRemembered = false
+    if (chosen && chosen.source === 'bar' && chosen.printScale > 0) {
+      templatePrintScaleValue = chosen.printScale
+      templatePrintSource = 'bar'
+      templatePrintStatus = chosen.printScale
+      rememberSessionPrintScale(chosen.printScale, 'bar')
+      logDiagnostic(`print_scale ${Number(chosen.printScale).toFixed(4)} source=bar`)
+      return
+    }
+    if (chosen && chosen.source === 'paper' && chosen.printScale > 0) {
+      const next = chosen.printScale
+      const prev = sessionPrintScale
+      if (prev && prev.value > 0 && Math.abs(next - prev.value) / prev.value > PRINT_SCALE_REMEMBER_SHIFT) {
+        logDiagnostic(`print_scale ${next.toFixed(4)} source=paper (was ${prev.value.toFixed(4)} ${prev.source})`)
+      } else {
+        logDiagnostic(`print_scale ${next.toFixed(4)} source=paper`)
+      }
+      templatePrintScaleValue = next
+      templatePrintSource = 'paper'
+      templatePrintStatus = next
+      rememberSessionPrintScale(next, 'paper')
+      return
+    }
+    if (sessionPrintScale && sessionPrintScale.value > 0) {
+      const source = sessionPrintScale.source === 'paper' ? 'paper-remembered' : 'bar'
+      templatePrintScaleValue = sessionPrintScale.value
+      templatePrintSource = source
+      templatePrintStatus = sessionPrintScale.value
+      templatePrintRemembered = true
+      logDiagnostic(`print_scale: reused ${sessionPrintScale.value.toFixed(4)} (${sessionPrintScale.source})`)
+      return
+    }
+    templatePrintScaleValue = 1
+    templatePrintSource = 'none'
+    templatePrintStatus = 'unverified'
+    logDiagnostic('print_scale unverified source=none')
+  }
+
   function applyTemplateDetection(result) {
     templateMeta = {
       markersFound: result && result.markersFound,
       markerRmsMm: result && result.markerRmsMm,
     }
-    if (result && result.print && result.print.source === 'bar') {
-      templatePrintScaleValue = result.print.printScale
-      templatePrintSource = 'bar'
-      templatePrintStatus = result.print.printScale
-    } else if (result && result.print && result.print.source === 'paper') {
-      templatePrintScaleValue = result.print.printScale
-      templatePrintSource = 'paper'
-      templatePrintStatus = result.print.printScale
-    } else {
+    if (!result || !result.print) {
+      templatePrintRemembered = false
       templatePrintScaleValue = 1
       templatePrintSource = 'none'
       templatePrintStatus = 'unverified'
+      return
     }
+    applyResolvedPrintScale(result.print)
   }
 
   function finishPlacedQuad() {
@@ -3699,11 +3790,16 @@ function bootReferenceApp() {
       const longPx = meanLongEdgePx(orderCorners(cardCorners))
       logDiagnostic(`markers: auto-upgrade from ${referenceKind}`)
       logDiagnostic(`auto-detected template via ${detectStrategy}: long edge ${Math.round(longPx)} px`)
-      showTemporaryInstruction(
-        'Printed template detected — check the outer marker corners, then Confirm',
-        DETECT_MESSAGE_HOLD_MS,
-        'ok'
-      )
+      if (templatePrintSource === 'none' && !printScaleNudgeShown) {
+        printScaleNudgeShown = true
+        showTemporaryInstruction(PRINT_SCALE_NUDGE, DETECT_MESSAGE_HOLD_MS)
+      } else {
+        showTemporaryInstruction(
+          'Printed template detected — check the outer marker corners, then Confirm',
+          DETECT_MESSAGE_HOLD_MS,
+          'ok'
+        )
+      }
       finishPlacedQuad()
       return
     }
@@ -3936,10 +4032,12 @@ function bootReferenceApp() {
 
   function resetTemplateScale() {
     readTemplateBarField()
+    templatePrintRemembered = false
     if (Math.abs(templateBarIn - TEMPLATE_LETTER_V1.barIn) > 1e-6) {
       templatePrintScaleValue = templateBarIn / TEMPLATE_LETTER_V1.barIn
       templatePrintSource = 'bar'
       templatePrintStatus = templatePrintScaleValue
+      rememberSessionPrintScale(templatePrintScaleValue, 'bar')
     } else {
       templatePrintScaleValue = 1
       templatePrintSource = 'none'
@@ -4108,7 +4206,7 @@ function bootReferenceApp() {
       if (token === 'card') noun = 'card'
       else if (token.indexOf('custom:') === 0) noun = 'reference'
       const strategy = reading.detectStrategy || 'manual'
-      const warn = reading.warningDisagree || reading.warningAngle || reading.warningAxis || reading.warningScale || reading.warningFlat ? ' · warn' : ''
+      const warn = reading.warningDisagree || reading.warningAngle || reading.warningAxis || reading.warningScale || reading.warningFlat || reading.warningPrintScale ? ' · warn' : ''
       row.textContent = `${i + 1} · ${reading.mode} · ${reading.layout || '1ref'} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect} · ${strategy}${warn}`
       els.measurementRows.append(row)
     }
@@ -4153,6 +4251,7 @@ function bootReferenceApp() {
       'auto_markers',
       'aspect_ratio_est',
       'focal_source',
+      'print_warning',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
       const reading = measurements[i]
@@ -4189,6 +4288,7 @@ function bootReferenceApp() {
         reading.autoMarkers === 'y' ? 'y' : 'n',
         tsvNumber(reading.aspectRatioEst, 2),
         reading.focalSource || 'none',
+        reading.warningPrintScale ? 'y' : 'n',
       ].join('\t'))
     }
     return `${lines.join('\n')}\n`
@@ -4266,6 +4366,7 @@ function bootReferenceApp() {
       warningAxis: currentReading.warningAxis,
       warningScale: currentReading.warningScale,
       warningFlat: currentReading.warningFlat,
+      warningPrintScale: !!currentReading.warningPrintScale,
       printScale: currentReading.printScale,
       printScaleSource: currentReading.printScaleSource,
       markersFound: currentReading.markersFound,
@@ -4411,9 +4512,13 @@ function bootReferenceApp() {
         setReference(option.getAttribute('data-reference'))
       })
     }
-    if (els.templateBarIn) {
-      els.templateBarIn.addEventListener('change', () => {
-        readTemplateBarField()
+    const barFields = templateBarFields()
+    for (let i = 0; i < barFields.length; i++) {
+      const field = barFields[i]
+      field.addEventListener('click', (event) => event.stopPropagation())
+      field.addEventListener('input', () => readTemplateBarField(field))
+      field.addEventListener('change', () => {
+        readTemplateBarField(field)
         resetTemplateScale()
         logDiagnostic(`bar measured ${templateBarIn.toFixed(2)} in`)
       })
