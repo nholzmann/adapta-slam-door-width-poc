@@ -148,6 +148,161 @@ if (letterErr > 0.5) {
   fail(`letter 914.4 mm span at 45° recovered ${letterRecovered.toFixed(4)} mm (err ${letterErr.toFixed(4)} mm > 0.5 mm)`)
 }
 
+const Hls = ref.solveHomographyLeastSquares(ordered, ref.isoDestinationMm(ordered))
+if (!Hls) fail('solveHomographyLeastSquares returned null')
+const lsRecovered = ref.planarDistanceMm(Hls, pixelA, pixelB)
+if (lsRecovered == null) fail('least-squares planarDistanceMm returned null')
+const lsErr = Math.abs(lsRecovered - TARGET_MM)
+if (lsErr > 0.5) {
+  fail(`least-squares 914.4 mm pair recovered ${lsRecovered.toFixed(4)} mm (err ${lsErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+// Jambs are parallel. B's taps sit 150 mm further along the jamb than A's,
+// so the A1–B1 chord is the hypotenuse, not the door width.
+const jambA1 = {x: 0, y: 0}
+const jambA2 = {x: 0, y: 400}
+const jambB1 = {x: TARGET_MM, y: 150}
+const jambB2 = {x: TARGET_MM, y: 550}
+const jambPx = [
+  ref.applyHomography(FORWARD, jambA1.x, jambA1.y),
+  ref.applyHomography(FORWARD, jambA2.x, jambA2.y),
+  ref.applyHomography(FORWARD, jambB1.x, jambB1.y),
+  ref.applyHomography(FORWARD, jambB2.x, jambB2.y),
+]
+const jambMm = jambPx.map((p) => ref.applyHomography(H, p.x, p.y))
+if (jambMm.some((p) => !p)) fail('offset jamb point fell off the homography')
+const jambLines = ref.perpendicularLinesDistanceMm(jambMm[0], jambMm[1], jambMm[2], jambMm[3])
+if (!jambLines) fail('perpendicularLinesDistanceMm returned null')
+const jambErr = Math.abs(jambLines.meanMm - TARGET_MM)
+if (jambErr > 0.5) {
+  fail(`line-to-line 914.4 mm with 150 mm jamb offset recovered ${jambLines.meanMm.toFixed(4)} mm (err ${jambErr.toFixed(4)} mm > 0.5 mm)`)
+}
+const rawChord = ref.planarDistanceMm(H, jambPx[0], jambPx[2])
+const chordErr = Math.abs(rawChord - 926.6)
+if (chordErr > 0.05) {
+  fail(`offset A1–B1 chord ${rawChord.toFixed(4)} mm, expected 926.6 mm`)
+}
+
+// Floor, 45° from nadir and 20° yaw. Cards lie on the door line, outer short
+// edges on the jambs (x = 0 and x = 914.4).
+const yawCameraHeight = 800
+const yawLook = {x: TARGET_MM / 2, y: ref.CARD_SHORT_MM / 2, z: 0}
+const yawRad = 20 * Math.PI / 180
+const yawHoriz = yawCameraHeight
+const yawCamera = {
+  x: yawLook.x + yawHoriz * Math.sin(yawRad),
+  y: yawLook.y - yawHoriz * Math.cos(yawRad),
+  z: yawLook.z + yawCameraHeight,
+}
+const yawForward = vecNorm({
+  x: yawLook.x - yawCamera.x,
+  y: yawLook.y - yawCamera.y,
+  z: yawLook.z - yawCamera.z,
+})
+const yawRight = vecNorm(vecCross(yawForward, {x: 0, y: 0, z: 1}))
+const yawDown = vecCross(yawForward, yawRight)
+const yawFocal = 2400
+const yawPrincipal = {x: 960, y: 720}
+
+function projectYawed(worldX, worldY) {
+  const delta = {
+    x: worldX - yawCamera.x,
+    y: worldY - yawCamera.y,
+    z: 0 - yawCamera.z,
+  }
+  const camX = vecDot(yawRight, delta)
+  const camY = vecDot(yawDown, delta)
+  const camZ = vecDot(yawForward, delta)
+  if (camZ <= 1) fail(`two-ref point (${worldX}, ${worldY}) is behind the yawed camera`)
+  return {
+    x: yawFocal * (camX / camZ) + yawPrincipal.x,
+    y: yawFocal * (camY / camZ) + yawPrincipal.y,
+  }
+}
+
+const cardLong = ref.CARD_LONG_MM
+const cardShort = ref.CARD_SHORT_MM
+const cardBOrigin = TARGET_MM - cardLong
+const worldCardA = [
+  {x: 0, y: 0},
+  {x: cardLong, y: 0},
+  {x: cardLong, y: cardShort},
+  {x: 0, y: cardShort},
+]
+const worldCardB = [
+  {x: cardBOrigin, y: 0},
+  {x: cardBOrigin + cardLong, y: 0},
+  {x: cardBOrigin + cardLong, y: cardShort},
+  {x: cardBOrigin, y: cardShort},
+]
+const pixelsA = worldCardA.map((p) => projectYawed(p.x, p.y))
+const pixelsB = worldCardB.map((p) => projectYawed(p.x, p.y))
+const twoRef = ref.twoReferenceDestinationMm(pixelsA, pixelsB, ref.CARD_REF, 'floor')
+if (!twoRef) fail('two-reference measurement returned null')
+const twoRefErr = Math.abs(twoRef.widthMm - TARGET_MM)
+if (twoRefErr > 0.5) {
+  fail(`two-ref 45°+yaw 914.4 mm recovered ${twoRef.widthMm.toFixed(4)} mm (err ${twoRefErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+function makeRng(seed) {
+  let state = seed >>> 0
+  return function () {
+    state = (state + 0x6D2B79F5) >>> 0
+    let t = Math.imul(state ^ (state >>> 15), 1 | state)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function gaussianish(rng) {
+  let u = rng()
+  let v = rng()
+  if (u < 1e-9) u = 1e-9
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+}
+
+const noiseRng = makeRng(8)
+function noisify(corners) {
+  return corners.map((p) => ({
+    x: p.x + 0.5 * gaussianish(noiseRng),
+    y: p.y + 0.5 * gaussianish(noiseRng),
+  }))
+}
+const noisy = ref.twoReferenceDestinationMm(noisify(pixelsA), noisify(pixelsB), ref.CARD_REF, 'floor')
+if (!noisy) fail('noisy two-reference measurement returned null')
+const noisyErr = Math.abs(noisy.widthMm - TARGET_MM)
+if (noisyErr > 5) {
+  fail(`two-ref ±0.5 px noise recovered ${noisy.widthMm.toFixed(4)} mm (err ${noisyErr.toFixed(4)} mm > 5 mm)`)
+}
+
+// Wall, orthographic: A's bottom long edge at y = 1000, B's top long edge
+// 914.4 mm above it. Image y grows downward, so the height mark is smaller y.
+const wallShort = ref.CARD_SHORT_MM
+const wallA = [
+  {x: 100, y: 1000},
+  {x: 100 + cardLong, y: 1000},
+  {x: 100 + cardLong, y: 1000 - wallShort},
+  {x: 100, y: 1000 - wallShort},
+]
+const wallTop = 1000 - TARGET_MM
+const wallB = [
+  {x: 100, y: wallTop},
+  {x: 100 + cardLong, y: wallTop},
+  {x: 100 + cardLong, y: wallTop + wallShort},
+  {x: 100, y: wallTop + wallShort},
+]
+const wallRef = ref.twoReferenceDestinationMm(wallA, wallB, ref.CARD_REF, 'wall')
+if (!wallRef) fail('wall two-reference measurement returned null')
+const wallErr = Math.abs(wallRef.widthMm - TARGET_MM)
+if (wallErr > 0.5) {
+  fail(`wall two-ref 914.4 mm recovered ${wallRef.widthMm.toFixed(4)} mm (err ${wallErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+const customPad = ref.customReference(11.75, 8.5)
+if (ref.referenceToken(customPad) !== 'custom:11.75x8.5') {
+  fail(`custom token ${ref.referenceToken(customPad)}, expected custom:11.75x8.5`)
+}
+
 console.log('orderCorners: TL/TR/BR/BL recovered from shuffled pixels')
 console.log(`ISO corner reprojection max error: ${maxCornerErr.toExponential(3)} mm`)
 console.log(`card long edge in synthetic image: ${ref.meanLongEdgePx(ordered).toFixed(1)} px`)
@@ -157,4 +312,9 @@ console.log(`letter sheet ${letter.longMm}×${letter.shortMm} mm, camera pitch 4
 console.log(`letter long edge in synthetic image: ${letterFit.cardLongPx.toFixed(1)} px`)
 console.log(`letter recovered distance: ${letterRecovered.toFixed(4)} mm (target ${TARGET_MM} mm)`)
 console.log(`letter distance error: ${letterErr.toExponential(3)} mm (limit 0.5 mm)`)
+console.log(`least-squares distance error: ${lsErr.toExponential(3)} mm (limit 0.5 mm)`)
+console.log(`line-to-line offset error: ${jambErr.toExponential(3)} mm (limit 0.5 mm); A1–B1 chord ${rawChord.toFixed(4)} mm`)
+console.log(`two-ref 45° pitch + 20° yaw error: ${twoRefErr.toExponential(3)} mm (limit 0.5 mm); drift ${twoRef.scaleDrift.toFixed(4)}; rms ${twoRef.fitRmsMm.toExponential(3)} mm; angle ${twoRef.linesAngleDeg.toFixed(3)}°`)
+console.log(`two-ref ±0.5 px noise error: ${noisyErr.toFixed(4)} mm (limit 5 mm); width ${noisy.widthMm.toFixed(4)} mm`)
+console.log(`wall two-ref error: ${wallErr.toExponential(3)} mm (limit 0.5 mm)`)
 console.log('PASS')

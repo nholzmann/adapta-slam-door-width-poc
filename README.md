@@ -11,7 +11,7 @@ useful, on a phone with no app install and no LiDAR?
 - `TEST-PROTOCOL.md` — how testers measure real doors and record results.
 
 Two tabs: **SLAM** (`index.html`) uses 8th Wall absolute-scale tracking to measure a door from two floor taps.
-**Reference** (`reference.html`) measures against a US credit card in a still photo (no SLAM, no 8th Wall). A US Letter sheet (279.4 × 215.9 mm) is an alternative scale reference on that tab.
+**Reference** (`reference.html`) measures against a US credit card in a still photo (no SLAM, no 8th Wall). A US Letter sheet (279.4 × 215.9 mm) is an alternative scale reference on that tab. Two references, one flush against each jamb, are the recommended measurement; a custom size (for example a legal pad) and a warning when the reference sits off the measurement line are on that tab too.
 
 Live page (GitHub Pages, served from `main`):
 https://nholzmann.github.io/adapta-slam-door-width-poc/
