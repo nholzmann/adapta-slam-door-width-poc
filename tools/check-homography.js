@@ -412,6 +412,123 @@ if (ref.referenceToken(ref.NOTEPAD_REF) !== 'notepad:11.5x8.5') {
 if (ref.referenceToken(ref.A4_REF) !== 'a4:11.69x8.27') {
   fail(`a4 token ${ref.referenceToken(ref.A4_REF)}, expected a4:11.69x8.27`)
 }
+if (ref.referenceToken(ref.templateReference(0.97)) !== 'template:letter-v1') {
+  fail(`template token ${ref.referenceToken(ref.templateReference(0.97))}, expected template:letter-v1`)
+}
+if (ref.FIT_RMS_WARN_MM !== 3) fail(`FIT_RMS_WARN_MM ${ref.FIT_RMS_WARN_MM}, expected 3`)
+if (ref.scaleDriftWarn(300, 280) !== 0.15) fail('scaleDriftWarn should be 0.15 when both long edges are under 400 px')
+if (ref.scaleDriftWarn(500, 300) !== 0.05) fail('scaleDriftWarn should be 0.05 when either long edge is 400 px or more')
+
+const PRINT_S = 0.97
+const pageOrigin = {x: -ref.LETTER_LONG_MM / 2, y: -ref.LETTER_SHORT_MM / 2}
+
+function inkWorld(xin, yin, originX, originY, printS) {
+  return {
+    x: originX + xin * ref.MM_PER_INCH * printS,
+    y: originY + yin * ref.MM_PER_INCH * printS,
+  }
+}
+
+function shuffledMarkerPixels(originX, originY, printS, projectFn) {
+  const cornersById = {}
+  for (let i = 0; i < ref.TEMPLATE_LETTER_V1.ids.length; i++) {
+    const id = ref.TEMPLATE_LETTER_V1.ids[i]
+    const inches = ref.templateMarkerOuterCornersIn(id)
+    const pixels = inches.map((p) => {
+      const w = inkWorld(p.x, p.y, originX, originY, printS)
+      return projectFn(w.x, w.y)
+    })
+    cornersById[id] = [pixels[2], pixels[0], pixels[3], pixels[1]]
+  }
+  return cornersById
+}
+
+const templatePixels = shuffledMarkerPixels(pageOrigin.x, pageOrigin.y, PRINT_S, projectFloor)
+const aligned = ref.alignTemplateMarkerCorners(templatePixels)
+if (!aligned || aligned.ids.length !== 4) fail('template marker align returned null')
+if (!(aligned.markerRmsMm < 0.05)) {
+  fail(`template marker rms ${aligned.markerRmsMm} mm, expected < 0.05 mm`)
+}
+const built = ref.templateQuadFromAlignedMarkers(aligned)
+if (!built || built.synthesized) fail('template outer quad should use all four markers')
+
+const templateFloorA = {x: -TARGET_MM / 2, y: 40}
+const templateFloorB = {x: TARGET_MM / 2, y: 40}
+const templatePixelA = projectFloor(templateFloorA.x, templateFloorA.y)
+const templatePixelB = projectFloor(templateFloorB.x, templateFloorB.y)
+
+const uncorrectedFit = ref.homographyPixelsToMm(built.cardCorners, ref.templateReference(1))
+if (!uncorrectedFit || !uncorrectedFit.H) fail('uncorrected template homography returned null')
+const uncorrectedMm = ref.planarDistanceMm(uncorrectedFit.H, templatePixelA, templatePixelB)
+const uncorrectedTarget = TARGET_MM / PRINT_S
+if (Math.abs(uncorrectedMm - uncorrectedTarget) > 0.5) {
+  fail(`uncorrected 0.97 print recovered ${uncorrectedMm.toFixed(4)} mm, expected ~${uncorrectedTarget.toFixed(1)} mm`)
+}
+
+const paperWorld = ref.templatePageCornersMm().map((p) => ({
+  x: pageOrigin.x + p.x,
+  y: pageOrigin.y + p.y,
+}))
+const paperPixels = paperWorld.map((p) => projectFloor(p.x, p.y))
+const paperSize = ref.paperMappedSizeMm(paperPixels, aligned.H)
+if (!paperSize || !ref.paperSizePlausible(paperSize.longMm, paperSize.shortMm)) {
+  fail(`paper mapped size ${paperSize && paperSize.longMm} × ${paperSize && paperSize.shortMm} mm not in band`)
+}
+const paperScale = ref.recoverPrintScaleFromPaper(paperSize.longMm, paperSize.shortMm)
+if (!paperScale.printScale || Math.abs(paperScale.printScale - PRINT_S) > 0.002) {
+  fail(`paper print scale ${paperScale.printScale}, expected ${PRINT_S}`)
+}
+if (paperScale.source !== 'paper') fail(`print scale source ${paperScale.source}, expected paper`)
+
+const barWins = ref.choosePrintScale(5.82, paperSize.longMm, paperSize.shortMm)
+if (barWins.source !== 'bar' || Math.abs(barWins.printScale - 5.82 / 6) > 1e-9) {
+  fail(`bar override lost to paper: ${JSON.stringify(barWins)}`)
+}
+
+const correctedFit = ref.homographyPixelsToMm(built.cardCorners, ref.templateReference(paperScale.printScale))
+if (!correctedFit || !correctedFit.H) fail('corrected template homography returned null')
+const correctedMm = ref.planarDistanceMm(correctedFit.H, templatePixelA, templatePixelB)
+const correctedErr = Math.abs(correctedMm - TARGET_MM)
+if (correctedErr > 0.5) {
+  fail(`corrected 0.97 print recovered ${correctedMm.toFixed(4)} mm (err ${correctedErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+const three = {}
+three[0] = templatePixels[0]
+three[1] = templatePixels[1]
+three[3] = templatePixels[3]
+const alignedThree = ref.alignTemplateMarkerCorners(three)
+const builtThree = alignedThree && ref.templateQuadFromAlignedMarkers(alignedThree)
+if (!builtThree || !builtThree.synthesized || builtThree.markersFound !== 3) {
+  fail('three-marker template should synthesise the missing outer corner')
+}
+const threeFit = ref.homographyPixelsToMm(builtThree.cardCorners, ref.templateReference(PRINT_S))
+const threeMm = ref.planarDistanceMm(threeFit.H, templatePixelA, templatePixelB)
+if (Math.abs(threeMm - TARGET_MM) > 0.5) {
+  fail(`3-marker template recovered ${threeMm.toFixed(4)} mm, expected ${TARGET_MM} mm`)
+}
+
+function projectTemplateQuad(originX, originY, printS, projectFn) {
+  const pixels = shuffledMarkerPixels(originX, originY, printS, projectFn)
+  const fit = ref.alignTemplateMarkerCorners(pixels)
+  const quad = fit && ref.templateQuadFromAlignedMarkers(fit)
+  if (!quad) fail('two-ref template quad failed')
+  return quad.cardCorners
+}
+
+const originA = {x: -0.60 * ref.MM_PER_INCH * PRINT_S, y: 0}
+const originB = {x: TARGET_MM - 10.40 * ref.MM_PER_INCH * PRINT_S, y: 0}
+const twoTemplate = ref.twoReferenceDestinationMm(
+  projectTemplateQuad(originA.x, originA.y, PRINT_S, projectYawed),
+  projectTemplateQuad(originB.x, originB.y, PRINT_S, projectYawed),
+  ref.templateReference(PRINT_S),
+  'floor'
+)
+if (!twoTemplate) fail('two-ref templates returned null')
+const twoTemplateErr = Math.abs(twoTemplate.widthMm - TARGET_MM)
+if (twoTemplateErr > 0.5) {
+  fail(`two-ref templates recovered ${twoTemplate.widthMm.toFixed(4)} mm (err ${twoTemplateErr.toFixed(4)} mm > 0.5 mm)`)
+}
 
 console.log('orderCorners: TL/TR/BR/BL recovered from shuffled pixels')
 console.log(`ISO corner reprojection max error: ${maxCornerErr.toExponential(3)} mm`)
@@ -431,4 +548,8 @@ console.log(`two-ref both short-across error: ${turnedErr.toExponential(3)} mm (
 console.log(`two-ref mixed orientation error: ${mixedErr.toExponential(3)} mm (limit 0.5 mm); ${mixed.orientA}/${mixed.orientB}`)
 console.log(`sheet-axis offset error: ${alignedWidthErr.toExponential(3)} mm (limit 0.5 mm); chord ${alignedSep.chordMm.toFixed(4)} mm; axis ${alignedSep.axis}; angle ${alignedSep.axisAngleDeg.toFixed(2)}°`)
 console.log(`sheet-axis rotated error: ${rotatedWidthErr.toExponential(3)} mm (limit 0.5 mm); axis ${rotatedSep.axis}`)
+console.log(`template 0.97 print uncorrected: ${uncorrectedMm.toFixed(4)} mm (target ${uncorrectedTarget.toFixed(1)} mm)`)
+console.log(`template 0.97 print corrected: ${correctedMm.toFixed(4)} mm (err ${correctedErr.toExponential(3)} mm); paper s=${paperScale.printScale.toFixed(4)}`)
+console.log(`template 3-marker recovered: ${threeMm.toFixed(4)} mm`)
+console.log(`two-ref templates error: ${twoTemplateErr.toExponential(3)} mm (limit 0.5 mm); ${twoTemplate.orientA}/${twoTemplate.orientB}`)
 console.log('PASS')

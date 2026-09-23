@@ -103,7 +103,25 @@ A small reference off the measurement line is unstable: the homography learns th
 
 The two-reference fit does not assume which edge spans the doorway: it tries all four long/short pairings and keeps the lowest eight-corner reprojection, because a card with its long edge along the jamb is a 53.98 mm span, not 85.60 mm, and that assumption stretched a 32 in door to about 51 in. In one-reference mode the two jamb taps are mapped into the sheet's axis-aligned frame and the width is the larger metric component, so a tap that slides along the jamb changes the chord but not the perpendicular width.
 
-Vision library: OpenCV.js (Apache-2.0) from `https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js`. Capture draws the live video frame onto an offscreen canvas at intrinsic size (no downscale) and measures on that image.
+Vision library: OpenCV.js (Apache-2.0) from `https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js`. Capture draws the live video frame onto an offscreen canvas at intrinsic size (no downscale) and measures on that image. OpenCV.js CDN builds do not ship the ArUco module, so marker detection uses **js-aruco2** (MIT) from jsDelivr (`src/cv.js`, `src/aruco.js`, `src/dictionaries/aruco_mip_36h12.js`). js-aruco2's global is `CV`; OpenCV's is `cv`. They do not collide in JavaScript; the page still snapshots `window.JSARUCO = {CV, AR}` before OpenCV loads.
+
+### Printed ArUco template (Letter v1)
+
+A dark credit card in shadow lost to a larger, sharper shadow/plank region: the quad scorer rewards area and has no notion of what a card is. Fiducials fix that. Four **ARUCO_MIP_36h12** markers (ids 0–3) give the sheet an identity, js-aruco2's adaptive threshold copes with uneven lighting, and sixteen corners (four per marker) overdetermine the plane so one occluded marker can be synthesised from the others.
+
+The printable page is US Letter landscape. Each marker's outer black square is 2.00 in. The measurement rectangle is the outermost corner of each marker: 9.80 × 7.30 in. That quad plugs into the existing 1-ref and 2-ref solvers unchanged.
+
+Print-scale checksum, three layers:
+
+1. A credit-card outline (ISO ID-1) on the sheet — a physical card must line up, or the print is scaled.
+2. A 6.00 in bar — a tape measure, typed into **Bar measured (in)**. That value wins.
+3. Automatic paper-edge: the Letter stock stays 11 × 8.5 when the printer “fits to page”; only the ink shrinks. Mapped through the unscaled-marker homography, a 97 % print makes the paper look 1/0.97 too large, so `s = 279.4 / measuredPaperLongMm` is 0.97. Apply `s` to the template millimetres. Long and short ratios must agree within 1 %, else `print_scale = unverified`.
+
+Lens calibration from the template is not this round.
+
+### Two-reference warning thresholds (cards)
+
+A two-card reading of 22.5 in on a 23.0 in door was flagged “references disagree” with `scale_drift` 2.36. The drift check extrapolates a single ~300 px card across the whole gap, so it is noisy when both long edges are small. `SCALE_DRIFT_WARN` is 0.15 when both long edges are under 400 px, and 0.05 otherwise. `FIT_RMS_WARN_MM` is 3 mm (was 2 mm) for the same reason.
 
 ### Why this tab exists (SLAM field test)
 
