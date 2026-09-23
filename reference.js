@@ -1,6 +1,7 @@
-// Still-image reference measurement: planar homography from a credit card
-// or a US Letter sheet to two taps, in millimetres. No SLAM. Pure geometry
-// is at the top so Node can require this file and check the math without a browser.
+// Still-image reference measurement, in millimetres. No SLAM.
+// One reference maps two jamb lines through a homography. Two references sit
+// on the jambs; the width is the perpendicular gap between their outer edges.
+// Pure geometry is at the top so Node can require this file without a browser.
 
 const CARD_LONG_MM = 85.60
 const CARD_SHORT_MM = 53.98
@@ -23,6 +24,13 @@ const GUIDE_LONG_EDGE_PX = 150
 // Mean gap / mean edge at which straightness scores 0. Keeps that term on
 // a 0–1 scale beside the aspect score and the area rank.
 const STRAIGHTNESS_GAP_FRACTION = 0.06
+// Field failures: an 8-corner fit worse than 2 mm, the two cards disagreeing
+// by more than 5% of scale, jamb lines opening more than 3°, or a tap whose
+// local scale is 1.5× the reference centre (the card is off the measurement).
+const FIT_RMS_WARN_MM = 2
+const SCALE_DRIFT_WARN = 0.05
+const LINES_ANGLE_WARN_DEG = 3
+const SCALE_RATIO_WARN = 1.5
 
 // ratio is long/short. Foreshortening is scored, not tightly gated:
 // accept ratio × 0.6 … ratio × 3 (a steep angle can stretch either axis).
@@ -44,13 +52,48 @@ const LETTER_REF = {
   defaultShortPx: 232,
 }
 
-const FLOOR_LIVE_INSTRUCTION = 'Lay the card (or sheet) on the floor between the jambs. Step back so both jambs and the card are in view, then Capture.'
-const WALL_LIVE_INSTRUCTION = 'Hold the card flat on the wall. Get the floor line and the height mark in view, then Capture.'
+function formatInchesToken(value) {
+  const rounded = Math.round(Number(value) * 1000) / 1000
+  if (!Number.isFinite(rounded)) return '0'
+  return String(rounded)
+}
+
+// Inches in, millimetres stored. defaultShortPx keeps the manual quad's aspect.
+function customReference(longIn, shortIn) {
+  const longMm = longIn * MM_PER_INCH
+  const shortMm = shortIn * MM_PER_INCH
+  return {
+    name: 'custom',
+    longMm,
+    shortMm,
+    ratio: longMm / shortMm,
+    defaultLongPx: 300,
+    defaultShortPx: 300 * (shortMm / longMm),
+    longIn,
+    shortIn,
+  }
+}
+
+function referenceToken(spec) {
+  if (!spec || spec.name === 'card') return 'card'
+  if (spec.name === 'letter') return 'letter'
+  const longIn = spec.longIn != null ? spec.longIn : spec.longMm / MM_PER_INCH
+  const shortIn = spec.shortIn != null ? spec.shortIn : spec.shortMm / MM_PER_INCH
+  return `custom:${formatInchesToken(longIn)}x${formatInchesToken(shortIn)}`
+}
+
+const FLOOR_LIVE_INSTRUCTION = 'Lay the card (or sheet) on the floor on the line between the jambs. Step back so both jambs and the reference are in view, then Capture.'
+const WALL_LIVE_INSTRUCTION = 'Hold the card flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
-const NEED_BOTH_INSTRUCTION = 'Place both points before saving.'
+const NEED_POINTS_INSTRUCTION = 'Place all four points before saving.'
+const NEED_REFS_INSTRUCTION = 'Confirm both references before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
 const MODE_LOCKED_INSTRUCTION = 'Mode can only be changed before Capture.'
+const LAYOUT_LOCKED_INSTRUCTION = 'Layout can only be changed before Capture.'
 const REFERENCE_LOCKED_INSTRUCTION = 'Reference can only be changed before Capture.'
+const DISAGREE_WARNING = 'References disagree — check that both lie flat on the same surface with long edges on one line, then Retake.'
+const FLUSH_WARNING = 'Cards are not both flush against the jambs — re-seat them and Retake.'
+const SCALE_WARNING = 'Unreliable: reference is far from the points or too small. Put it on the line between the points, or use 2 refs.'
 
 function point(x, y) {
   return {x, y}
@@ -210,6 +253,545 @@ function planarDistanceMm(H, a, b) {
   return Math.hypot(pa.x - pb.x, pa.y - pb.y)
 }
 
+function mat3Mul(a, b) {
+  const out = new Array(9)
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      let sum = 0
+      for (let k = 0; k < 3; k++) sum += a[r * 3 + k] * b[k * 3 + c]
+      out[r * 3 + c] = sum
+    }
+  }
+  return out
+}
+
+function invertHomography(H) {
+  if (!H || H.length < 9) return null
+  const a = H[0]
+  const b = H[1]
+  const c = H[2]
+  const d = H[3]
+  const e = H[4]
+  const f = H[5]
+  const g = H[6]
+  const h = H[7]
+  const i = H[8]
+  const A = e * i - f * h
+  const B = f * g - d * i
+  const C = d * h - e * g
+  const det = a * A + b * B + c * C
+  if (Math.abs(det) < 1e-14) return null
+  const s = 1 / det
+  return [
+    A * s, (c * h - b * i) * s, (b * f - c * e) * s,
+    B * s, (a * i - c * g) * s, (c * d - a * f) * s,
+    C * s, (b * g - a * h) * s, (a * e - b * d) * s,
+  ]
+}
+
+// Cyclic Jacobi on a symmetric matrix. Returns the eigenvector for the
+// smallest eigenvalue — the null-vector of a DLT Gram matrix.
+function smallestEigenvectorSymmetric(matrix) {
+  const n = matrix.length
+  const a = []
+  const v = []
+  for (let i = 0; i < n; i++) {
+    a.push(matrix[i].slice())
+    const basis = new Array(n).fill(0)
+    basis[i] = 1
+    v.push(basis)
+  }
+  for (let sweep = 0; sweep < 24; sweep++) {
+    let maxOff = 0
+    for (let p = 0; p < n; p++) {
+      for (let q = p + 1; q < n; q++) {
+        const apq = a[p][q]
+        const mag = Math.abs(apq)
+        if (mag > maxOff) maxOff = mag
+        if (mag < 1e-15) continue
+        const app = a[p][p]
+        const aqq = a[q][q]
+        const tau = (aqq - app) / (2 * apq)
+        const denom = Math.abs(tau) + Math.sqrt(1 + tau * tau)
+        const t = (tau >= 0 ? 1 : -1) / denom
+        const c = 1 / Math.sqrt(1 + t * t)
+        const s = t * c
+        a[p][p] = c * c * app - 2 * s * c * apq + s * s * aqq
+        a[q][q] = s * s * app + 2 * s * c * apq + c * c * aqq
+        a[p][q] = 0
+        a[q][p] = 0
+        for (let i = 0; i < n; i++) {
+          if (i === p || i === q) continue
+          const aip = a[i][p]
+          const aiq = a[i][q]
+          a[i][p] = a[p][i] = c * aip - s * aiq
+          a[i][q] = a[q][i] = s * aip + c * aiq
+        }
+        for (let i = 0; i < n; i++) {
+          const vip = v[i][p]
+          const viq = v[i][q]
+          v[i][p] = c * vip - s * viq
+          v[i][q] = s * vip + c * viq
+        }
+      }
+    }
+    if (maxOff < 1e-14) break
+  }
+  let minIndex = 0
+  for (let i = 1; i < n; i++) {
+    if (a[i][i] < a[minIndex][minIndex]) minIndex = i
+  }
+  const vec = new Array(n)
+  let norm = 0
+  for (let i = 0; i < n; i++) {
+    vec[i] = v[i][minIndex]
+    norm += vec[i] * vec[i]
+  }
+  if (!(norm > 0)) return null
+  return vec
+}
+
+function normalizingTransform(pts) {
+  const n = pts.length
+  let cx = 0
+  let cy = 0
+  for (let i = 0; i < n; i++) {
+    cx += pts[i].x
+    cy += pts[i].y
+  }
+  cx /= n
+  cy /= n
+  let dist = 0
+  for (let i = 0; i < n; i++) dist += Math.hypot(pts[i].x - cx, pts[i].y - cy)
+  dist /= n
+  if (!(dist > 1e-9)) return null
+  const scale = Math.SQRT2 / dist
+  const normalized = []
+  for (let i = 0; i < n; i++) {
+    normalized.push({
+      x: scale * (pts[i].x - cx),
+      y: scale * (pts[i].y - cy),
+    })
+  }
+  return {normalized, cx, cy, scale}
+}
+
+// Hartley DLT: normalise, 2n×9 system, smallest eigenvector of AᵀA.
+function solveHomographyDlt(srcPts, dstPts) {
+  const srcN = normalizingTransform(srcPts)
+  const dstN = normalizingTransform(dstPts)
+  if (!srcN || !dstN) return null
+  const rows = []
+  for (let i = 0; i < srcN.normalized.length; i++) {
+    const x = srcN.normalized[i].x
+    const y = srcN.normalized[i].y
+    const u = dstN.normalized[i].x
+    const v = dstN.normalized[i].y
+    rows.push([0, 0, 0, -x, -y, -1, v * x, v * y, v])
+    rows.push([x, y, 1, 0, 0, 0, -u * x, -u * y, -u])
+  }
+  const gram = []
+  for (let i = 0; i < 9; i++) gram.push(new Array(9).fill(0))
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r]
+    for (let i = 0; i < 9; i++) {
+      const ri = row[i]
+      if (ri === 0) continue
+      for (let j = i; j < 9; j++) gram[i][j] += ri * row[j]
+    }
+  }
+  for (let i = 0; i < 9; i++) {
+    for (let j = i + 1; j < 9; j++) gram[j][i] = gram[i][j]
+  }
+  const h = smallestEigenvectorSymmetric(gram)
+  if (!h) return null
+  for (let i = 0; i < 9; i++) {
+    if (!Number.isFinite(h[i])) return null
+  }
+  const Tsrc = [
+    srcN.scale, 0, -srcN.scale * srcN.cx,
+    0, srcN.scale, -srcN.scale * srcN.cy,
+    0, 0, 1,
+  ]
+  const TdstInv = [
+    1 / dstN.scale, 0, dstN.cx,
+    0, 1 / dstN.scale, dstN.cy,
+    0, 0, 1,
+  ]
+  return mat3Mul(mat3Mul(TdstInv, h), Tsrc)
+}
+
+// n ≥ 4. Pure JS so the self-check runs in Node. cv.findHomography (method 0,
+// every point) is only the fallback when the pure solve fails.
+function solveHomographyLeastSquares(srcPts, dstPts) {
+  if (!srcPts || !dstPts || srcPts.length < 4 || srcPts.length !== dstPts.length) return null
+  const pure = solveHomographyDlt(srcPts, dstPts)
+  if (pure) return pure
+  if (typeof cv !== 'undefined' && cv && typeof cv.findHomography === 'function') {
+    try {
+      return cvFindHomographyArray(srcPts, dstPts)
+    } catch (err) {
+      return null
+    }
+  }
+  return null
+}
+
+// Infinite line, not the segment. An offset tap's foot can fall past the
+// other reference's edge and must still count.
+function distancePointToLine(p, a, b) {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy)
+  if (len < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y)
+  return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len
+}
+
+function linesAngleDeg(a1, a2, b1, b2) {
+  const ax = a2.x - a1.x
+  const ay = a2.y - a1.y
+  const bx = b2.x - b1.x
+  const by = b2.y - b1.y
+  const na = Math.hypot(ax, ay)
+  const nb = Math.hypot(bx, by)
+  if (na < 1e-9 || nb < 1e-9) return null
+  let cos = (ax * bx + ay * by) / (na * nb)
+  if (cos < 0) cos = -cos
+  if (cos > 1) cos = 1
+  return Math.acos(cos) * 180 / Math.PI
+}
+
+// Mean of the four endpoint-to-other-line distances. Spread is max − min.
+function perpendicularLinesDistanceMm(a1, a2, b1, b2) {
+  if (!a1 || !a2 || !b1 || !b2) return null
+  const dists = [
+    distancePointToLine(a1, b1, b2),
+    distancePointToLine(a2, b1, b2),
+    distancePointToLine(b1, a1, a2),
+    distancePointToLine(b2, a1, a2),
+  ]
+  let sum = 0
+  let lo = dists[0]
+  let hi = dists[0]
+  for (let i = 0; i < 4; i++) {
+    if (!Number.isFinite(dists[i])) return null
+    sum += dists[i]
+    if (dists[i] < lo) lo = dists[i]
+    if (dists[i] > hi) hi = dists[i]
+  }
+  return {
+    meanMm: sum / 4,
+    spreadMm: hi - lo,
+    angleDeg: linesAngleDeg(a1, a2, b1, b2),
+  }
+}
+
+// Geometric-mean mm/px from ±1 px finite differences. Isotropic enough to
+// compare the reference centre with a far tap.
+function localScaleMmPerPx(H, x, y) {
+  const xp = applyHomography(H, x + 1, y)
+  const xm = applyHomography(H, x - 1, y)
+  const yp = applyHomography(H, x, y + 1)
+  const ym = applyHomography(H, x, y - 1)
+  if (!xp || !xm || !yp || !ym) return null
+  const sx = Math.hypot(xp.x - xm.x, xp.y - xm.y) / 2
+  const sy = Math.hypot(yp.x - ym.x, yp.y - ym.y) / 2
+  if (!(sx > 0) || !(sy > 0)) return null
+  return Math.sqrt(sx * sy)
+}
+
+function mapPoints(H, pts) {
+  const out = []
+  for (let i = 0; i < pts.length; i++) {
+    const mapped = applyHomography(H, pts[i].x, pts[i].y)
+    if (!mapped) return null
+    out.push(mapped)
+  }
+  return out
+}
+
+function metricPoint(measurement, transverse, mode) {
+  if (mode === 'wall') return {x: transverse, y: measurement}
+  return {x: measurement, y: transverse}
+}
+
+function axisOf(point, mode) {
+  if (mode === 'wall') return {m: point.y, t: point.x}
+  return {m: point.x, t: point.y}
+}
+
+function normalizeVec(x, y) {
+  const len = Math.hypot(x, y) || 1
+  return {x: x / len, y: y / len}
+}
+
+// Slots: outerLow, outerHigh, innerLow, innerHigh. The measurement edges are
+// the pair perpendicular to A→B (floor: the short edges on the jambs; wall:
+// the long edges on the floor line and the height mark). Outer is the one
+// farther from the other reference.
+function referenceCornerSlots(corners, otherCentroid, doorDir) {
+  const ordered = orderCorners(corners)
+  const self = centroidOf(ordered)
+  const toward = normalizeVec(otherCentroid.x - self.x, otherCentroid.y - self.y)
+  const transverse = {x: -doorDir.y, y: doorDir.x}
+  const edges = []
+  for (let i = 0; i < 4; i++) {
+    const p0 = ordered[i]
+    const p1 = ordered[(i + 1) % 4]
+    const ex = p1.x - p0.x
+    const ey = p1.y - p0.y
+    const len = Math.hypot(ex, ey) || 1
+    edges.push({
+      v0: i,
+      v1: (i + 1) % 4,
+      midX: (p0.x + p1.x) / 2,
+      midY: (p0.y + p1.y) / 2,
+      align: Math.abs((ex * doorDir.x + ey * doorDir.y) / len),
+    })
+  }
+  const align02 = (edges[0].align + edges[2].align) / 2
+  const align13 = (edges[1].align + edges[3].align) / 2
+  const pair = align02 <= align13 ? [edges[0], edges[2]] : [edges[1], edges[3]]
+  const proj0 = pair[0].midX * toward.x + pair[0].midY * toward.y
+  const proj1 = pair[1].midX * toward.x + pair[1].midY * toward.y
+  const outer = proj0 <= proj1 ? pair[0] : pair[1]
+  const t0 = ordered[outer.v0].x * transverse.x + ordered[outer.v0].y * transverse.y
+  const t1 = ordered[outer.v1].x * transverse.x + ordered[outer.v1].y * transverse.y
+  const outerLowV = t0 <= t1 ? outer.v0 : outer.v1
+  const outerHighV = outerLowV === outer.v0 ? outer.v1 : outer.v0
+  function offEdge(vertex) {
+    const prev = (vertex + 3) % 4
+    const next = (vertex + 1) % 4
+    if (prev !== outer.v0 && prev !== outer.v1) return prev
+    return next
+  }
+  const innerLowV = offEdge(outerLowV)
+  const innerHighV = offEdge(outerHighV)
+  const ids = [outerLowV, outerHighV, innerLowV, innerHighV]
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      if (ids[i] === ids[j]) return null
+    }
+  }
+  return [
+    ordered[outerLowV],
+    ordered[outerHighV],
+    ordered[innerLowV],
+    ordered[innerHighV],
+  ]
+}
+
+// innerSign +1 grows the reference toward +measurement (A). B's inner edge
+// faces A, so its sign is −1 and its outer edge sits at W.
+function slotDestinations(spec, mode, outerM, transverseOrigin, innerSign) {
+  const extent = mode === 'wall' ? spec.shortMm : spec.longMm
+  const across = mode === 'wall' ? spec.longMm : spec.shortMm
+  const innerM = outerM + innerSign * extent
+  return [
+    metricPoint(outerM, transverseOrigin, mode),
+    metricPoint(outerM, transverseOrigin + across, mode),
+    metricPoint(innerM, transverseOrigin, mode),
+    metricPoint(innerM, transverseOrigin + across, mode),
+  ]
+}
+
+function mappedLongEdgeMm(mapped, mode) {
+  const along = (edgeLength(mapped[0], mapped[2]) + edgeLength(mapped[1], mapped[3])) / 2
+  const across = (edgeLength(mapped[0], mapped[1]) + edgeLength(mapped[2], mapped[3])) / 2
+  return mode === 'wall' ? across : along
+}
+
+function pixelReprojectionRms(H, srcPts, dstPts) {
+  const inv = invertHomography(H)
+  if (!inv) return Infinity
+  let sum = 0
+  for (let i = 0; i < srcPts.length; i++) {
+    const back = applyHomography(inv, dstPts[i].x, dstPts[i].y)
+    if (!back) return Infinity
+    const dx = back.x - srcPts[i].x
+    const dy = back.y - srcPts[i].y
+    sum += dx * dx + dy * dy
+  }
+  return Math.sqrt(sum / srcPts.length)
+}
+
+function metricReprojectionRms(H, srcPts, dstPts) {
+  let sum = 0
+  for (let i = 0; i < srcPts.length; i++) {
+    const mapped = applyHomography(H, srcPts[i].x, srcPts[i].y)
+    if (!mapped) return null
+    const dx = mapped.x - dstPts[i].x
+    const dy = mapped.y - dstPts[i].y
+    sum += dx * dx + dy * dy
+  }
+  return Math.sqrt(sum / srcPts.length)
+}
+
+function furtherFromOne(a, b) {
+  function score(value) {
+    if (!(value > 0) || !Number.isFinite(value)) return Infinity
+    return Math.abs(Math.log(value))
+  }
+  return score(a) >= score(b) ? a : b
+}
+
+// Vertex of the interpolating parabola. a is the second divided difference.
+function parabolaMinimum(x1, y1, x2, y2, x3, y3) {
+  if (x1 === x2 || x2 === x3 || x1 === x3) return null
+  const d12 = (y2 - y1) / (x2 - x1)
+  const d23 = (y3 - y2) / (x3 - x2)
+  const a = (d23 - d12) / (x3 - x1)
+  if (!(a > 1e-12)) return null
+  const b = d12 - a * (x1 + x2)
+  const vertex = -b / (2 * a)
+  const lo = Math.min(x1, x2, x3)
+  const hi = Math.max(x1, x2, x3)
+  if (vertex < lo || vertex > hi) return null
+  return vertex
+}
+
+// Two coplanar references of known size. The shared frame cannot be fixed
+// until the gap W is known, so: fit H_A from A's four corners (outer edge at
+// measurement 0), map all eight corners, and read W_est as the perpendicular
+// distance between the outer edges. Scale drift is B's mapped long edge over
+// the true long edge, and the same check from H_B. Destinations are then A's
+// rectangle on [0, extent] and B's on [W − extent, W], with B shifted by the
+// transverse offset seen in A's frame (the long edges need not be collinear).
+// A wrong W is not a homography of the plane: the 8-point pixel residual is
+// unimodal in W, so a downhill bracket re-estimates it and one parabola
+// refits. Two iterations. The reported width is the mean of the four
+// endpoint-to-other-line distances under the final H, not a point chord.
+function twoReferenceDestinationMm(cornersA, cornersB, ref, mode) {
+  const spec = ref || CARD_REF
+  const which = mode === 'wall' ? 'wall' : 'floor'
+  if (!cornersA || !cornersB || cornersA.length !== 4 || cornersB.length !== 4) return null
+  const centroidA = centroidOf(cornersA)
+  const centroidB = centroidOf(cornersB)
+  const span = Math.hypot(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
+  if (!(span > 1)) return null
+  const doorDir = normalizeVec(centroidB.x - centroidA.x, centroidB.y - centroidA.y)
+  if (!Number.isFinite(doorDir.x) || !Number.isFinite(doorDir.y)) return null
+  const slotsA = referenceCornerSlots(cornersA, centroidB, doorDir)
+  const slotsB = referenceCornerSlots(cornersB, centroidA, doorDir)
+  if (!slotsA || !slotsB) return null
+  const dstA = slotDestinations(spec, which, 0, 0, 1)
+  const dstBLocal = slotDestinations(spec, which, 0, 0, 1)
+  const HA = solveHomographyLeastSquares(slotsA, dstA)
+  const HB = solveHomographyLeastSquares(slotsB, dstBLocal)
+  if (!HA || !HB) return null
+  const mappedB = mapPoints(HA, slotsB)
+  const mappedA = mapPoints(HB, slotsA)
+  if (!mappedB || !mappedA) return null
+  const linesFromA = perpendicularLinesDistanceMm(dstA[0], dstA[1], mappedB[0], mappedB[1])
+  const linesFromB = perpendicularLinesDistanceMm(dstBLocal[0], dstBLocal[1], mappedA[0], mappedA[1])
+  if (!linesFromA || !(linesFromA.meanMm > 1)) return null
+  const across = which === 'wall' ? spec.longMm : spec.shortMm
+  let tSum = 0
+  for (let i = 0; i < 4; i++) tSum += axisOf(mappedB[i], which).t
+  const yB = tSum / 4 - across / 2
+  const driftA = mappedLongEdgeMm(mappedB, which) / spec.longMm
+  const driftB = mappedLongEdgeMm(mappedA, which) / spec.longMm
+  const src = slotsA.concat(slotsB)
+  const initialW = linesFromA.meanMm
+  function fitAt(W) {
+    const dst = dstA.concat(slotDestinations(spec, which, W, yB, -1))
+    const H = solveHomographyLeastSquares(src, dst)
+    if (!H) return null
+    return {H, dst, rmsPx: pixelReprojectionRms(H, src, dst)}
+  }
+  // A single-card H extrapolates noise across the whole gap, so W_est can
+  // be tens of millimetres off. Pixel reprojection of the 8-point H is
+  // unimodal in W. Walk downhill until the error rises (bracket), then one
+  // parabolic refit. That is the two-iteration re-estimate.
+  let best = fitAt(initialW)
+  if (!best) return null
+  let bestW = initialW
+  if (linesFromB && linesFromB.meanMm > 1) {
+    const fromB = fitAt(linesFromB.meanMm)
+    if (fromB && fromB.rmsPx < best.rmsPx) {
+      best = fromB
+      bestW = linesFromB.meanMm
+    }
+  }
+  const step0 = Math.max(4, Math.abs(bestW) * 0.03)
+  const leftW = bestW - step0
+  const rightW = bestW + step0
+  const leftFit = fitAt(leftW)
+  const rightFit = fitAt(rightW)
+  let dir = 1
+  if (leftFit && rightFit) dir = rightFit.rmsPx < leftFit.rmsPx ? 1 : -1
+  else if (leftFit) dir = -1
+  let prevW = bestW
+  let prevFit = best
+  let curW = bestW + dir * step0
+  let curFit = dir > 0 ? rightFit : leftFit
+  if (curFit && curFit.rmsPx < prevFit.rmsPx) {
+    let step = step0
+    for (let n = 0; n < 8; n++) {
+      step *= 1.7
+      const nextW = curW + dir * step
+      if (!(nextW > bestW * 0.35) || nextW > bestW * 2.5) break
+      const nextFit = fitAt(nextW)
+      if (!nextFit) break
+      if (nextFit.rmsPx >= curFit.rmsPx) {
+        const vertex = parabolaMinimum(prevW, prevFit.rmsPx, curW, curFit.rmsPx, nextW, nextFit.rmsPx)
+        if (vertex != null) {
+          const refined = fitAt(vertex)
+          if (refined && refined.rmsPx <= curFit.rmsPx) {
+            best = refined
+            bestW = vertex
+          } else {
+            best = curFit
+            bestW = curW
+          }
+        } else {
+          best = curFit
+          bestW = curW
+        }
+        curFit = null
+        break
+      }
+      prevW = curW
+      prevFit = curFit
+      curW = nextW
+      curFit = nextFit
+    }
+    if (curFit && curFit.rmsPx < best.rmsPx) {
+      best = curFit
+      bestW = curW
+    }
+  } else if (leftFit && rightFit) {
+    const vertex = parabolaMinimum(leftW, leftFit.rmsPx, bestW, best.rmsPx, rightW, rightFit.rmsPx)
+    if (vertex != null) {
+      const refined = fitAt(vertex)
+      if (refined && refined.rmsPx <= best.rmsPx) {
+        best = refined
+        bestW = vertex
+      }
+    }
+  }
+  const mapped = mapPoints(best.H, src)
+  if (!mapped) return null
+  const lines = perpendicularLinesDistanceMm(mapped[0], mapped[1], mapped[4], mapped[5])
+  if (!lines) return null
+  const fitRmsMm = metricReprojectionRms(best.H, src, best.dst)
+  if (fitRmsMm == null) return null
+  return {
+    H: best.H,
+    src,
+    dst: best.dst,
+    widthMm: lines.meanMm,
+    spreadMm: lines.spreadMm,
+    linesAngleDeg: lines.angleDeg,
+    fitRmsMm,
+    scaleDrift: furtherFromOne(driftA, driftB),
+    scaleDriftA: driftA,
+    scaleDriftB: driftB,
+    refAPx: meanLongEdgePx(orderCorners(cornersA)),
+    refBPx: meanLongEdgePx(orderCorners(cornersB)),
+  }
+}
+
 function homographyPixelsToMm(pixelCorners, ref) {
   if (!pixelCorners || pixelCorners.length !== 4) return null
   const ordered = orderCorners(pixelCorners)
@@ -258,6 +840,31 @@ function mat3ToArray(mat) {
     for (let c = 0; c < 3; c++) out.push(mat.doubleAt(r, c))
   }
   return out
+}
+
+// method 0 uses every correspondence. Called only when the pure DLT returns null.
+function cvFindHomographyArray(srcPts, dstPts) {
+  const n = srcPts.length
+  const srcData = []
+  const dstData = []
+  for (let i = 0; i < n; i++) {
+    srcData.push(srcPts[i].x, srcPts[i].y)
+    dstData.push(dstPts[i].x, dstPts[i].y)
+  }
+  const src = cv.matFromArray(n, 1, cv.CV_32FC2, srcData)
+  const dst = cv.matFromArray(n, 1, cv.CV_32FC2, dstData)
+  let mat = null
+  try {
+    mat = cv.findHomography(src, dst, 0)
+    if (!mat || (typeof mat.empty === 'function' && mat.empty())) return null
+    const H = mat3ToArray(mat)
+    if (!H || H.length < 9) return null
+    return H
+  } finally {
+    if (src && typeof src.delete === 'function') src.delete()
+    if (dst && typeof dst.delete === 'function') dst.delete()
+    if (mat && typeof mat.delete === 'function') mat.delete()
+  }
 }
 
 function inchesFromMm(mm) {
@@ -394,8 +1001,14 @@ if (typeof module !== 'undefined' && module.exports) {
     referenceDestinationMm,
     meanLongEdgePx,
     solveHomography,
+    solveHomographyLeastSquares,
     applyHomography,
     planarDistanceMm,
+    perpendicularLinesDistanceMm,
+    localScaleMmPerPx,
+    twoReferenceDestinationMm,
+    customReference,
+    referenceToken,
     homographyPixelsToMm,
     defaultQuadAt,
     quadAnglesOk,
@@ -420,7 +1033,9 @@ function bootReferenceApp() {
 
   let phase = 'live'
   let mode = 'floor'
+  let layout = 'one'
   let referenceKind = 'card'
+  let customRef = null
   let cameraStream = null
   let cameraReady = false
   let cameraDenied = false
@@ -434,12 +1049,17 @@ function bootReferenceApp() {
   let captureGamma = null
   let cardCorners = null
   let originalCorners = null
+  let refACorners = null
+  let refBCorners = null
+  let refADetect = 'manual'
+  let refBDetect = 'manual'
+  let refAStrategy = 'manual'
+  let refBStrategy = 'manual'
   let detectKind = 'manual'
   let detectStrategy = 'manual'
   let homography = null
   let cardLongPx = 0
-  let pointA = null
-  let pointB = null
+  let points = {a1: null, a2: null, b1: null, b2: null}
   let currentReading = null
   let dragTarget = null
   let dragAnchor = null
@@ -469,8 +1089,15 @@ function bootReferenceApp() {
     els.enableTiltButton = document.getElementById('enableTiltButton')
     els.floorModeButton = document.getElementById('floorModeButton')
     els.wallModeButton = document.getElementById('wallModeButton')
+    els.oneRefButton = document.getElementById('oneRefButton')
+    els.twoRefButton = document.getElementById('twoRefButton')
     els.cardReferenceButton = document.getElementById('cardReferenceButton')
     els.letterReferenceButton = document.getElementById('letterReferenceButton')
+    els.customReferenceButton = document.getElementById('customReferenceButton')
+    els.customReferencePopover = document.getElementById('customReferencePopover')
+    els.customLongIn = document.getElementById('customLongIn')
+    els.customShortIn = document.getElementById('customShortIn')
+    els.customApplyButton = document.getElementById('customApplyButton')
     els.captureButton = document.getElementById('captureButton')
     els.resetPointsButton = document.getElementById('resetPointsButton')
     els.logButton = document.getElementById('logButton')
@@ -478,6 +1105,7 @@ function bootReferenceApp() {
     els.resultInches = document.getElementById('resultInches')
     els.resultCentimeters = document.getElementById('resultCentimeters')
     els.resultMeta = document.getElementById('resultMeta')
+    els.resultWarning = document.getElementById('resultWarning')
     els.measurementSummary = document.getElementById('measurementSummary')
     els.measurementRows = document.getElementById('measurementRows')
     els.clipboardFallback = document.getElementById('clipboardFallback')
@@ -528,14 +1156,22 @@ function bootReferenceApp() {
   }
 
   function currentReference() {
-    return referenceKind === 'letter' ? LETTER_REF : CARD_REF
+    if (referenceKind === 'letter') return LETTER_REF
+    if (referenceKind === 'custom' && customRef) return customRef
+    return CARD_REF
   }
 
   // Spoken noun in prompts. The Letter reference is a sheet, not a card.
   function referenceNoun(capitalized) {
-    const word = referenceKind === 'letter' ? 'sheet' : 'card'
+    let word = 'card'
+    if (referenceKind === 'letter') word = 'sheet'
+    else if (referenceKind === 'custom') word = 'reference'
     if (!capitalized) return word
     return word.charAt(0).toUpperCase() + word.slice(1)
+  }
+
+  function twoRefLayout() {
+    return layout === 'two'
   }
 
   function formatAngle(value) {
@@ -553,18 +1189,30 @@ function bootReferenceApp() {
     return `${line1}<br>${line2}`
   }
 
-  function pointAInstruction() {
-    if (mode === 'wall') return 'Press the floor line and slide the crosshair onto it, then lift'
-    return 'Press the left jamb at the floor and slide the crosshair onto the edge, then lift'
+  function pointInstruction(key) {
+    if (mode === 'wall') {
+      if (key === 'a1') return 'Press on the floor line — first point. Slide the crosshair, then lift'
+      if (key === 'a2') return 'Press a second point further along the same floor line'
+      if (key === 'b1') return 'Press on the height mark — first point'
+      return 'Press a second point further along the same mark'
+    }
+    if (key === 'a1') return 'Press on the LEFT jamb base — first point. Slide the crosshair, then lift'
+    if (key === 'a2') return 'Press a second point further along the same jamb'
+    if (key === 'b1') return 'Press on the RIGHT jamb base — first point'
+    return 'Press a second point further along the same jamb'
   }
 
-  function pointBInstruction() {
-    if (mode === 'wall') return 'Press the height mark and slide the crosshair onto it, then lift'
-    return 'Press the right jamb at the floor and slide the crosshair onto the edge, then lift'
-  }
-
-  function tapReferenceInstruction() {
-    return `Tap the ${referenceNoun(false)}`
+  function tapReferenceInstruction(which) {
+    const noun = referenceNoun(false)
+    if (which === 'b') {
+      if (mode === 'wall') return `Tap the UPPER ${noun}`
+      return `Tap the RIGHT ${noun}`
+    }
+    if (twoRefLayout()) {
+      if (mode === 'wall') return `Tap the LOWER ${noun}`
+      return `Tap the LEFT ${noun}`
+    }
+    return `Tap the ${noun}`
   }
 
   function adjustReferenceInstruction() {
@@ -581,14 +1229,34 @@ function bootReferenceApp() {
     return `Those corners do not form a ${noun}. Drag them onto the four edges and confirm again.`
   }
 
+  function liveInstruction() {
+    const noun = referenceNoun(false)
+    if (twoRefLayout() && mode === 'wall') {
+      return `Put one ${noun} flat on the wall, bottom long edge on the floor line. Put the other flat on the wall, top long edge on the height mark. Both in view, then Capture.`
+    }
+    if (twoRefLayout()) {
+      return `Put one ${noun} flat on the floor against each jamb: long edge along the door, one short edge touching the jamb. Step back so both are in view, then Capture.`
+    }
+    if (mode === 'wall') return WALL_LIVE_INSTRUCTION
+    return FLOOR_LIVE_INSTRUCTION
+  }
+
+  function resultInstruction() {
+    if (twoRefLayout()) return 'Result is on screen. Save to list, or Retake / Reset refs.'
+    return 'Result is on screen. Save to list, or Retake / Reset points.'
+  }
+
   function instructionForState() {
     if (cameraDenied) return CAMERA_DENIED_INSTRUCTION
-    if (phase === 'live') return mode === 'wall' ? WALL_LIVE_INSTRUCTION : FLOOR_LIVE_INSTRUCTION
-    if (phase === 'need-card-tap') return tapReferenceInstruction()
-    if (phase === 'adjust-card') return adjustReferenceInstruction()
-    if (phase === 'point-a') return pointAInstruction()
-    if (phase === 'point-b') return pointBInstruction()
-    return 'Result is on screen. Save to list, or Retake / Reset points.'
+    if (phase === 'live') return liveInstruction()
+    if (phase === 'need-card-tap') return tapReferenceInstruction('a')
+    if (phase === 'need-card-b') return tapReferenceInstruction('b')
+    if (phase === 'adjust-card' || phase === 'adjust-card-b') return adjustReferenceInstruction()
+    if (phase === 'point-a1') return pointInstruction('a1')
+    if (phase === 'point-a2') return pointInstruction('a2')
+    if (phase === 'point-b1') return pointInstruction('b1')
+    if (phase === 'point-b2') return pointInstruction('b2')
+    return resultInstruction()
   }
 
   function renderInstruction() {
@@ -635,6 +1303,10 @@ function bootReferenceApp() {
     let top = els.topBar.offsetHeight + 4
     if (els.statusStrip && !els.statusStrip.hasAttribute('hidden')) {
       top += els.statusStrip.offsetHeight + 4
+    }
+    if (els.customReferencePopover && !els.customReferencePopover.hasAttribute('hidden')) {
+      els.customReferencePopover.style.top = `${top}px`
+      top += els.customReferencePopover.offsetHeight + 4
     }
     els.instructionText.style.top = `${top}px`
   }
@@ -701,16 +1373,90 @@ function bootReferenceApp() {
     logDiagnostic(`mode ${mode}`)
   }
 
+  function updateReferenceChips() {
+    if (els.cardReferenceButton) {
+      els.cardReferenceButton.setAttribute('aria-pressed', referenceKind === 'card' ? 'true' : 'false')
+    }
+    if (els.letterReferenceButton) {
+      els.letterReferenceButton.setAttribute('aria-pressed', referenceKind === 'letter' ? 'true' : 'false')
+    }
+    if (els.customReferenceButton) {
+      els.customReferenceButton.setAttribute('aria-pressed', referenceKind === 'custom' ? 'true' : 'false')
+    }
+  }
+
+  function hideCustomForm() {
+    if (!els.customReferencePopover) return
+    els.customReferencePopover.setAttribute('hidden', '')
+    positionChrome()
+  }
+
+  function showCustomForm() {
+    if (!els.customReferencePopover) return
+    if (customRef) {
+      els.customLongIn.value = formatInchesToken(customRef.longIn)
+      els.customShortIn.value = formatInchesToken(customRef.shortIn)
+    }
+    els.customReferencePopover.removeAttribute('hidden')
+    positionChrome()
+    if (els.customLongIn) els.customLongIn.focus()
+  }
+
+  function setLayout(next) {
+    if (phase !== 'live') {
+      showTemporaryInstruction(LAYOUT_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
+      return
+    }
+    layout = next === 'two' ? 'two' : 'one'
+    if (els.oneRefButton) els.oneRefButton.setAttribute('aria-pressed', layout === 'one' ? 'true' : 'false')
+    if (els.twoRefButton) els.twoRefButton.setAttribute('aria-pressed', layout === 'two' ? 'true' : 'false')
+    refreshButtonLabels()
+    instructionHoldUntil = 0
+    renderInstruction()
+    logDiagnostic(`layout ${layout}`)
+  }
+
   function setReference(next) {
     if (phase !== 'live') {
       showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
       return
     }
+    if (next === 'custom') {
+      showCustomForm()
+      return
+    }
+    hideCustomForm()
     referenceKind = next === 'letter' ? 'letter' : 'card'
-    els.cardReferenceButton.setAttribute('aria-pressed', referenceKind === 'card' ? 'true' : 'false')
-    els.letterReferenceButton.setAttribute('aria-pressed', referenceKind === 'letter' ? 'true' : 'false')
+    updateReferenceChips()
+    instructionHoldUntil = 0
+    renderInstruction()
     drawMarks()
     logDiagnostic(`reference ${referenceKind}`)
+  }
+
+  function applyCustomReference() {
+    if (phase !== 'live') {
+      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
+      return
+    }
+    const longIn = Number(String(els.customLongIn.value).trim())
+    const shortIn = Number(String(els.customShortIn.value).trim())
+    if (!(longIn > 0) || !(shortIn > 0) || longIn > 40 || shortIn > 40) {
+      showTemporaryInstruction('Enter both edges in inches, up to 40.', MESSAGE_HOLD_MS)
+      return
+    }
+    if (longIn < shortIn) {
+      showTemporaryInstruction('Long edge should be the longer side.', MESSAGE_HOLD_MS)
+      return
+    }
+    customRef = customReference(longIn, shortIn)
+    referenceKind = 'custom'
+    updateReferenceChips()
+    hideCustomForm()
+    instructionHoldUntil = 0
+    renderInstruction()
+    drawMarks()
+    logDiagnostic(`reference ${referenceToken(customRef)}`)
   }
 
   function setPrimaryButton() {
@@ -718,8 +1464,11 @@ function bootReferenceApp() {
     const locked = phase !== 'live'
     els.floorModeButton.disabled = locked
     els.wallModeButton.disabled = locked
+    if (els.oneRefButton) els.oneRefButton.disabled = locked
+    if (els.twoRefButton) els.twoRefButton.disabled = locked
     if (els.cardReferenceButton) els.cardReferenceButton.disabled = locked
     if (els.letterReferenceButton) els.letterReferenceButton.disabled = locked
+    if (els.customReferenceButton) els.customReferenceButton.disabled = locked
     if (phase === 'live') {
       if (visionReady) {
         button.innerHTML = 'Capture'
@@ -735,7 +1484,7 @@ function bootReferenceApp() {
         button.innerHTML = 'Loading…'
         button.disabled = true
       }
-    } else if (phase === 'adjust-card') {
+    } else if (phase === 'adjust-card' || phase === 'adjust-card-b') {
       button.innerHTML = stackedLabel('Confirm', referenceNoun(false))
       button.disabled = false
     } else {
@@ -747,7 +1496,7 @@ function bootReferenceApp() {
   function refreshButtonLabels() {
     setPrimaryButton()
     if (els.resetPointsButton && els.resetPointsButton.textContent !== 'Resetting') {
-      els.resetPointsButton.innerHTML = stackedLabel('Reset', 'points')
+      els.resetPointsButton.innerHTML = twoRefLayout() ? stackedLabel('Reset', 'refs') : stackedLabel('Reset', 'points')
     }
     if (els.logButton && els.logButton.textContent !== 'Saved') {
       els.logButton.innerHTML = stackedLabel('Save', 'to list')
@@ -922,6 +1671,40 @@ function bootReferenceApp() {
     ctx.restore()
   }
 
+  function drawQuad(ctx, corners, stroke, fill, handles) {
+    if (!corners || corners.length !== 4) return
+    ctx.beginPath()
+    const first = imageToLocal(corners[0].x, corners[0].y)
+    ctx.moveTo(first.x, first.y)
+    for (let i = 1; i < 4; i++) {
+      const p = imageToLocal(corners[i].x, corners[i].y)
+      ctx.lineTo(p.x, p.y)
+    }
+    ctx.closePath()
+    ctx.fillStyle = fill
+    ctx.fill()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = stroke
+    ctx.stroke()
+    if (!handles) return
+    for (let i = 0; i < 4; i++) {
+      const p = imageToLocal(corners[i].x, corners[i].y)
+      drawHandle(ctx, p.x, p.y)
+    }
+  }
+
+  function drawSegment(ctx, a, b, stroke) {
+    if (!a || !b) return
+    const pa = imageToLocal(a.x, a.y)
+    const pb = imageToLocal(b.x, b.y)
+    ctx.beginPath()
+    ctx.moveTo(pa.x, pa.y)
+    ctx.lineTo(pb.x, pb.y)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = stroke
+    ctx.stroke()
+  }
+
   function drawMarks() {
     const canvas = els.marks
     if (!canvas) return
@@ -932,46 +1715,30 @@ function bootReferenceApp() {
       return
     }
 
+    const adjustingA = phase === 'adjust-card' || phase === 'need-card-tap'
+    const adjustingB = phase === 'adjust-card-b'
+    if (refACorners && !adjustingA) {
+      drawQuad(ctx, refACorners, '#ffe14a', 'rgba(255, 225, 74, 0.12)', false)
+    }
     if (cardCorners && cardCorners.length === 4) {
-      ctx.beginPath()
-      const first = imageToLocal(cardCorners[0].x, cardCorners[0].y)
-      ctx.moveTo(first.x, first.y)
-      for (let i = 1; i < 4; i++) {
-        const p = imageToLocal(cardCorners[i].x, cardCorners[i].y)
-        ctx.lineTo(p.x, p.y)
-      }
-      ctx.closePath()
-      ctx.fillStyle = 'rgba(255, 225, 74, 0.12)'
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = '#ffe14a'
-      ctx.stroke()
-      if (phase === 'adjust-card' || phase === 'need-card-tap') {
-        for (let i = 0; i < 4; i++) {
-          const p = imageToLocal(cardCorners[i].x, cardCorners[i].y)
-          drawHandle(ctx, p.x, p.y)
-        }
-      }
+      const activeIsB = adjustingB || (twoRefLayout() && refACorners && phase !== 'adjust-card')
+      const stroke = activeIsB ? '#7dffb3' : '#ffe14a'
+      const fill = activeIsB ? 'rgba(125, 255, 179, 0.12)' : 'rgba(255, 225, 74, 0.12)'
+      drawQuad(ctx, cardCorners, stroke, fill, adjustingA || adjustingB)
+    }
+    if (refBCorners && phase !== 'adjust-card-b') {
+      drawQuad(ctx, refBCorners, '#7dffb3', 'rgba(125, 255, 179, 0.12)', false)
     }
 
-    if (pointA) {
-      const a = imageToLocal(pointA.x, pointA.y)
-      drawHandle(ctx, a.x, a.y)
+    const keys = ['a1', 'a2', 'b1', 'b2']
+    for (let i = 0; i < keys.length; i++) {
+      const p = points[keys[i]]
+      if (!p) continue
+      const local = imageToLocal(p.x, p.y)
+      drawHandle(ctx, local.x, local.y)
     }
-    if (pointB) {
-      const b = imageToLocal(pointB.x, pointB.y)
-      drawHandle(ctx, b.x, b.y)
-    }
-    if (pointA && pointB) {
-      const a = imageToLocal(pointA.x, pointA.y)
-      const b = imageToLocal(pointB.x, pointB.y)
-      ctx.beginPath()
-      ctx.moveTo(a.x, a.y)
-      ctx.lineTo(b.x, b.y)
-      ctx.lineWidth = 2
-      ctx.strokeStyle = '#ffe14a'
-      ctx.stroke()
-    }
+    drawSegment(ctx, points.a1, points.a2, '#ffe14a')
+    drawSegment(ctx, points.b1, points.b2, '#7dffb3')
 
     if (loupePoint) {
       const guide = imageToLocal(loupePoint.x, loupePoint.y)
@@ -990,43 +1757,179 @@ function bootReferenceApp() {
     els.resultInches.textContent = ''
     els.resultCentimeters.textContent = ''
     els.resultMeta.textContent = ''
+    if (els.resultWarning) {
+      els.resultWarning.textContent = ''
+      els.resultWarning.setAttribute('hidden', '')
+    }
+    if (els.readout) els.readout.classList.remove('has-warning')
+  }
+
+  function warningLines(reading) {
+    const lines = []
+    if (reading.warningDisagree) lines.push(DISAGREE_WARNING)
+    if (reading.warningAngle) {
+      if (reading.layout === '2refs') lines.push(FLUSH_WARNING)
+      else if (reading.mode === 'wall') lines.push('The two lines are not parallel — place both points along each mark, then Retake.')
+      else lines.push('The jamb lines are not parallel — place both points along each jamb face, then Retake.')
+    }
+    if (reading.warningScale) lines.push(SCALE_WARNING)
+    return lines
   }
 
   function renderResult(reading) {
     els.resultInches.textContent = `${reading.inches.toFixed(1)} in`
     els.resultCentimeters.textContent = `· ${reading.cm.toFixed(1)} cm`
-    const noun = reading.reference === 'letter' ? 'sheet' : 'card'
-    els.resultMeta.textContent = `${noun} ${Math.round(reading.cardLongPx)} px · ${reading.imageW}×${reading.imageH} · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)}`
-  }
-
-  function finishMeasurement() {
-    if (!homography || !pointA || !pointB) return
-    const mm = planarDistanceMm(homography, pointA, pointB)
-    if (mm == null || !Number.isFinite(mm)) {
-      showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
+    els.resultMeta.textContent = reading.meta || ''
+    const lines = warningLines(reading)
+    if (!els.resultWarning) return
+    if (lines.length === 0) {
+      els.resultWarning.textContent = ''
+      els.resultWarning.setAttribute('hidden', '')
+      els.readout.classList.remove('has-warning')
       return
     }
-    const inches = inchesFromMm(mm)
-    currentReading = {
-      mode,
-      reference: referenceKind,
-      mm,
-      inches,
-      cm: mm / 10,
-      cardLongPx,
-      imageW: captureWidth,
-      imageH: captureHeight,
-      beta: captureBeta,
-      gamma: captureGamma,
-      detect: detectIsManual() ? 'manual' : detectKind,
-      detectStrategy: detectStrategy || 'manual',
+    els.resultWarning.textContent = lines.join(' ')
+    els.resultWarning.removeAttribute('hidden')
+    els.readout.classList.add('has-warning')
+  }
+
+  function worseRatio(a, b) {
+    function score(value) {
+      if (!(value > 0) || !Number.isFinite(value)) return -1
+      return Math.abs(Math.log(value))
     }
-    renderResult(currentReading)
+    if (score(a) >= score(b)) return a
+    return b
+  }
+
+  function scaleUnreliable(ratio) {
+    return ratio != null && (ratio > SCALE_RATIO_WARN || ratio < 1 / SCALE_RATIO_WARN)
+  }
+
+  function showReading(reading) {
+    currentReading = reading
+    renderResult(reading)
     phase = 'result'
     instructionHoldUntil = 0
     setPrimaryButton()
     renderInstruction()
     drawMarks()
+  }
+
+  function baseReading(extra) {
+    const reading = {
+      mode,
+      layout: twoRefLayout() ? '2refs' : '1ref',
+      reference: referenceToken(currentReference()),
+      imageW: captureWidth,
+      imageH: captureHeight,
+      beta: captureBeta,
+      gamma: captureGamma,
+    }
+    const keys = Object.keys(extra)
+    for (let i = 0; i < keys.length; i++) reading[keys[i]] = extra[keys[i]]
+    return reading
+  }
+
+  function finishMeasurement() {
+    if (!homography || !points.a1 || !points.a2 || !points.b1 || !points.b2) return
+    const mapped = [
+      applyHomography(homography, points.a1.x, points.a1.y),
+      applyHomography(homography, points.a2.x, points.a2.y),
+      applyHomography(homography, points.b1.x, points.b1.y),
+      applyHomography(homography, points.b2.x, points.b2.y),
+    ]
+    if (mapped.some((p) => !p)) {
+      showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
+      return
+    }
+    const lines = perpendicularLinesDistanceMm(mapped[0], mapped[1], mapped[2], mapped[3])
+    if (!lines || !Number.isFinite(lines.meanMm)) {
+      showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
+      return
+    }
+    const rawMm = Math.hypot(mapped[0].x - mapped[2].x, mapped[0].y - mapped[2].y)
+    const center = centroidOf(cardCorners)
+    const centerScale = localScaleMmPerPx(homography, center.x, center.y)
+    const ratioOf = (p) => {
+      const scale = localScaleMmPerPx(homography, p.x, p.y)
+      if (scale == null || !(centerScale > 0)) return null
+      return scale / centerScale
+    }
+    const ratioA1 = ratioOf(points.a1)
+    const ratioA2 = ratioOf(points.a2)
+    const ratioB1 = ratioOf(points.b1)
+    const ratioB2 = ratioOf(points.b2)
+    const scaleRatioA = worseRatio(ratioA1, ratioA2)
+    const scaleRatioB = worseRatio(ratioB1, ratioB2)
+    const inches = inchesFromMm(lines.meanMm)
+    const rawIn = inchesFromMm(rawMm)
+    const noun = referenceNoun(false)
+    const angle = lines.angleDeg
+    const reading = baseReading({
+      mm: lines.meanMm,
+      inches,
+      cm: lines.meanMm / 10,
+      cardLongPx,
+      detect: detectIsManual() ? 'manual' : detectKind,
+      detectStrategy: detectStrategy || 'manual',
+      linesAngleDeg: angle,
+      linesSpreadMm: lines.spreadMm,
+      rawPointIn: rawIn,
+      scaleRatioA,
+      scaleRatioB,
+      fitRmsMm: null,
+      scaleDrift: null,
+      refAPx: null,
+      refBPx: null,
+      warningDisagree: false,
+      warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
+      warningScale: scaleUnreliable(ratioA1) || scaleUnreliable(ratioA2) || scaleUnreliable(ratioB1) || scaleUnreliable(ratioB2),
+      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)} · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+    })
+    showReading(reading)
+  }
+
+  function formatRatio(value) {
+    if (value == null || !Number.isFinite(value)) return '—'
+    return value.toFixed(2)
+  }
+
+  function finishTwoRef(measured, detect, strategy) {
+    const inches = inchesFromMm(measured.widthMm)
+    const angle = measured.linesAngleDeg
+    const drift = measured.scaleDrift
+    const disagree = measured.fitRmsMm > FIT_RMS_WARN_MM || Math.abs(drift - 1) > SCALE_DRIFT_WARN
+    const reading = baseReading({
+      mm: measured.widthMm,
+      inches,
+      cm: measured.widthMm / 10,
+      cardLongPx: measured.refAPx,
+      detect,
+      detectStrategy: strategy,
+      linesAngleDeg: angle,
+      linesSpreadMm: measured.spreadMm,
+      rawPointIn: null,
+      scaleRatioA: null,
+      scaleRatioB: null,
+      fitRmsMm: measured.fitRmsMm,
+      scaleDrift: drift,
+      refAPx: measured.refAPx,
+      refBPx: measured.refBPx,
+      warningDisagree: disagree,
+      warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
+      warningScale: false,
+      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${Math.round(measured.refAPx)} px · B ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+    })
+    showReading(reading)
+    const smallA = measured.refAPx < SMALL_CARD_PX
+    const smallB = measured.refBPx < SMALL_CARD_PX
+    if (smallA || smallB) {
+      showTemporaryInstruction(
+        `${referenceNoun(true)} is small in the image (A ${Math.round(measured.refAPx)} px, B ${Math.round(measured.refBPx)} px). Retake closer for better accuracy.`,
+        MESSAGE_HOLD_MS
+      )
+    }
   }
 
   function detectIsManual() {
@@ -1472,35 +2375,78 @@ function bootReferenceApp() {
         DETECT_MESSAGE_HOLD_MS
       )
     }
-    phase = 'adjust-card'
+    phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
     setPrimaryButton()
     renderInstruction()
     drawMarks()
   }
 
+  function smallReferenceNote(longPx) {
+    return `${referenceNoun(true)} is small in the image (${Math.round(longPx)} px). Retake closer for better accuracy.`
+  }
+
   function confirmCard() {
+    const which = twoRefLayout() && refACorners ? 'b' : 'a'
     if (!cardCorners || cardCorners.length !== 4) {
-      showTemporaryInstruction(tapReferenceInstruction(), MESSAGE_HOLD_MS)
+      showTemporaryInstruction(tapReferenceInstruction(which), MESSAGE_HOLD_MS)
       return
     }
+    const dragged = detectIsManual()
     const result = homographyPixelsToMm(cardCorners, currentReference())
     if (!result || !result.H) {
       showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
     }
+    const kind = dragged ? 'manual' : detectKind
+    const strategy = detectStrategy || 'manual'
+    const ordered = result.ordered.map(copyPoint)
+    const longPx = result.cardLongPx
+    logDiagnostic(`${referenceNoun(false)} confirmed: long edge ${Math.round(longPx)} px detect=${kind} strategy=${strategy}`)
+    if (twoRefLayout() && !refACorners) {
+      refACorners = ordered
+      refADetect = kind
+      refAStrategy = strategy
+      cardCorners = null
+      originalCorners = null
+      detectKind = 'manual'
+      detectStrategy = 'manual'
+      homography = null
+      phase = 'need-card-b'
+      setPrimaryButton()
+      if (longPx < SMALL_CARD_PX) showTemporaryInstruction(smallReferenceNote(longPx), MESSAGE_HOLD_MS)
+      else {
+        instructionHoldUntil = 0
+        renderInstruction()
+      }
+      drawMarks()
+      return
+    }
+    if (twoRefLayout()) {
+      refBDetect = kind
+      refBStrategy = strategy
+      const measured = twoReferenceDestinationMm(refACorners, ordered, currentReference(), mode)
+      if (!measured) {
+        cardCorners = ordered
+        phase = 'adjust-card-b'
+        showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
+        drawMarks()
+        return
+      }
+      refBCorners = ordered
+      cardCorners = null
+      originalCorners = null
+      const detect = refADetect === 'manual' || refBDetect === 'manual' ? 'manual' : 'auto'
+      finishTwoRef(measured, detect, `${refAStrategy}+${refBStrategy}`)
+      return
+    }
     homography = result.H
-    cardCorners = result.ordered
-    cardLongPx = result.cardLongPx
-    if (detectIsManual()) detectKind = 'manual'
-    logDiagnostic(`${referenceNoun(false)} confirmed: long edge ${Math.round(cardLongPx)} px detect=${detectKind} strategy=${detectStrategy || 'manual'}`)
-    phase = 'point-a'
+    cardCorners = ordered
+    cardLongPx = longPx
+    detectKind = kind
+    phase = 'point-a1'
     setPrimaryButton()
-    if (cardLongPx < SMALL_CARD_PX) {
-      showTemporaryInstruction(
-        `${referenceNoun(true)} is small in the image (${Math.round(cardLongPx)} px). Retake closer for better accuracy.`,
-        MESSAGE_HOLD_MS
-      )
-    } else {
+    if (longPx < SMALL_CARD_PX) showTemporaryInstruction(smallReferenceNote(longPx), MESSAGE_HOLD_MS)
+    else {
       instructionHoldUntil = 0
       renderInstruction()
     }
@@ -1526,42 +2472,58 @@ function bootReferenceApp() {
     return best
   }
 
+  function placingPoints() {
+    return phase === 'point-a1' || phase === 'point-a2' || phase === 'point-b1' || phase === 'point-b2' || (phase === 'result' && !twoRefLayout())
+  }
+
+  function nearestPointKey(localX, localY) {
+    const keys = ['a1', 'a2', 'b1', 'b2']
+    let best = null
+    let bestDist = HANDLE_HIT_RADIUS_PX
+    for (let i = 0; i < keys.length; i++) {
+      if (!points[keys[i]]) continue
+      const dist = handleDistance(localX, localY, points[keys[i]])
+      if (dist <= bestDist) {
+        bestDist = dist
+        best = keys[i]
+      }
+    }
+    return best
+  }
+
+  function firstMissingPoint() {
+    const keys = ['a1', 'a2', 'b1', 'b2']
+    for (let i = 0; i < keys.length; i++) {
+      if (!points[keys[i]]) return keys[i]
+    }
+    return null
+  }
+
   function onStagePointerDown(event) {
     if (phase === 'live') return
     event.preventDefault()
     els.stage.setPointerCapture(event.pointerId)
     const loc = clientToImage(event.clientX, event.clientY)
-    if (phase === 'need-card-tap') {
+    if (phase === 'need-card-tap' || phase === 'need-card-b') {
       placeCardAtTap(loc.x, loc.y)
       return
     }
-    if (phase === 'adjust-card' && cardCorners) {
+    if ((phase === 'adjust-card' || phase === 'adjust-card-b') && cardCorners) {
       const index = nearestCornerIndex(loc.localX, loc.localY)
       if (index >= 0) beginDrag({kind: 'corner', index: index}, cardCorners[index], loc)
       return
     }
-    if (phase === 'point-a' || phase === 'point-b' || phase === 'result') {
-      const hitA = pointA ? handleDistance(loc.localX, loc.localY, pointA) : Infinity
-      const hitB = pointB ? handleDistance(loc.localX, loc.localY, pointB) : Infinity
-      if (hitA <= HANDLE_HIT_RADIUS_PX && hitA <= hitB) {
-        beginDrag({kind: 'a'}, pointA, loc)
-        return
-      }
-      if (hitB <= HANDLE_HIT_RADIUS_PX) {
-        beginDrag({kind: 'b'}, pointB, loc)
-        return
-      }
-      // Same gesture creates the point and slides it. A quick tap commits on lift.
-      if (!pointA) {
-        pointA = point(loc.x, loc.y)
-        beginDrag({kind: 'a'}, pointA, loc)
-        return
-      }
-      if (!pointB && phase !== 'point-a') {
-        pointB = point(loc.x, loc.y)
-        beginDrag({kind: 'b'}, pointB, loc)
-      }
+    if (!placingPoints()) return
+    const hit = nearestPointKey(loc.localX, loc.localY)
+    if (hit) {
+      beginDrag({kind: 'point', key: hit}, points[hit], loc)
+      return
     }
+    // Same gesture creates the point and slides it. A quick tap commits on lift.
+    const missing = firstMissingPoint()
+    if (!missing || phase === 'result') return
+    points[missing] = point(loc.x, loc.y)
+    beginDrag({kind: 'point', key: missing}, points[missing], loc)
   }
 
   function onStagePointerMove(event) {
@@ -1571,10 +2533,8 @@ function bootReferenceApp() {
     const next = draggedImagePoint(loc)
     if (dragTarget.kind === 'corner') {
       cardCorners[dragTarget.index] = next
-    } else if (dragTarget.kind === 'a') {
-      pointA = next
-    } else if (dragTarget.kind === 'b') {
-      pointB = next
+    } else if (dragTarget.kind === 'point') {
+      points[dragTarget.key] = next
     }
     loupePoint = {x: next.x, y: next.y, localX: loc.localX, localY: loc.localY}
     drawMarks()
@@ -1585,19 +2545,21 @@ function bootReferenceApp() {
     event.preventDefault()
     const was = dragTarget
     endDrag()
-    if (was.kind === 'a' && pointA && !pointB) {
-      phase = 'point-b'
+    if (was.kind !== 'point') {
+      drawMarks()
+      return
+    }
+    const missing = firstMissingPoint()
+    if (missing) {
+      phase = `point-${missing}`
       instructionHoldUntil = 0
       setPrimaryButton()
       renderInstruction()
       drawMarks()
       return
     }
-    if ((was.kind === 'a' || was.kind === 'b') && pointA && pointB && homography) {
-      finishMeasurement()
-      return
-    }
-    drawMarks()
+    if (homography) finishMeasurement()
+    else drawMarks()
   }
 
   function showStill() {
@@ -1606,6 +2568,23 @@ function bootReferenceApp() {
 
   function showLive() {
     els.stage.classList.remove('is-still')
+  }
+
+  function clearCaptureGeometry() {
+    cardCorners = null
+    originalCorners = null
+    refACorners = null
+    refBCorners = null
+    refADetect = 'manual'
+    refBDetect = 'manual'
+    refAStrategy = 'manual'
+    refBStrategy = 'manual'
+    detectKind = 'manual'
+    detectStrategy = 'manual'
+    homography = null
+    cardLongPx = 0
+    points = {a1: null, a2: null, b1: null, b2: null}
+    currentReading = null
   }
 
   function captureFrame() {
@@ -1626,15 +2605,8 @@ function bootReferenceApp() {
     els.still.getContext('2d').drawImage(captureCanvas, 0, 0)
     captureBeta = beta
     captureGamma = gamma
-    cardCorners = null
-    originalCorners = null
-    homography = null
-    cardLongPx = 0
-    pointA = null
-    pointB = null
-    currentReading = null
-    detectKind = 'manual'
-    detectStrategy = 'manual'
+    clearCaptureGeometry()
+    hideCustomForm()
     clearResultText()
     showStill()
     phase = 'need-card-tap'
@@ -1642,20 +2614,12 @@ function bootReferenceApp() {
     instructionHoldUntil = 0
     renderInstruction()
     resizeMarks()
-    logDiagnostic(`capture ${width}×${height} ref=${referenceKind} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
+    logDiagnostic(`capture ${width}×${height} layout=${layout} ref=${referenceToken(currentReference())} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
   }
 
   function retake() {
-    cardCorners = null
-    originalCorners = null
-    homography = null
-    cardLongPx = 0
-    pointA = null
-    pointB = null
-    currentReading = null
-    detectKind = 'manual'
-    detectStrategy = 'manual'
     endDrag()
+    clearCaptureGeometry()
     clearResultText()
     showLive()
     phase = 'live'
@@ -1668,9 +2632,31 @@ function bootReferenceApp() {
 
   function resetPoints() {
     endDrag()
+    if (twoRefLayout()) {
+      if (phase === 'live') return
+      refACorners = null
+      refBCorners = null
+      refADetect = 'manual'
+      refBDetect = 'manual'
+      refAStrategy = 'manual'
+      refBStrategy = 'manual'
+      cardCorners = null
+      originalCorners = null
+      detectKind = 'manual'
+      detectStrategy = 'manual'
+      homography = null
+      cardLongPx = 0
+      currentReading = null
+      clearResultText()
+      phase = 'need-card-tap'
+      instructionHoldUntil = 0
+      setPrimaryButton()
+      renderInstruction()
+      drawMarks()
+      return
+    }
     if (phase === 'live' || phase === 'need-card-tap' || phase === 'adjust-card') {
-      pointA = null
-      pointB = null
+      points = {a1: null, a2: null, b1: null, b2: null}
       currentReading = null
       clearResultText()
       drawMarks()
@@ -1680,11 +2666,10 @@ function bootReferenceApp() {
       showTemporaryInstruction(needReferenceInstruction(), MESSAGE_HOLD_MS)
       return
     }
-    pointA = null
-    pointB = null
+    points = {a1: null, a2: null, b1: null, b2: null}
     currentReading = null
     clearResultText()
-    phase = 'point-a'
+    phase = 'point-a1'
     instructionHoldUntil = 0
     setPrimaryButton()
     renderInstruction()
@@ -1703,7 +2688,7 @@ function bootReferenceApp() {
       captureFrame()
       return
     }
-    if (phase === 'adjust-card') {
+    if (phase === 'adjust-card' || phase === 'adjust-card-b') {
       confirmCard()
       return
     }
@@ -1724,9 +2709,10 @@ function bootReferenceApp() {
       const reading = measurements[i]
       const row = document.createElement('div')
       row.className = 'measurement-row'
-      const noun = reading.reference === 'letter' ? 'sheet' : 'card'
+      const noun = reading.reference === 'letter' ? 'sheet' : (String(reading.reference).indexOf('custom:') === 0 ? 'reference' : 'card')
       const strategy = reading.detectStrategy || 'manual'
-      row.textContent = `${i + 1} · ${reading.mode} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect} · ${strategy}`
+      const warn = reading.warningDisagree || reading.warningAngle || reading.warningScale ? ' · warn' : ''
+      row.textContent = `${i + 1} · ${reading.mode} · ${reading.layout || '1ref'} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect} · ${strategy}${warn}`
       els.measurementRows.append(row)
     }
   }
@@ -1750,6 +2736,16 @@ function bootReferenceApp() {
       'tilt_gamma',
       'detect',
       'detect_strategy',
+      'layout',
+      'fit_rms_mm',
+      'scale_drift',
+      'ref_a_px',
+      'ref_b_px',
+      'lines_angle_deg',
+      'lines_spread_mm',
+      'raw_point_in',
+      'scale_ratio_a',
+      'scale_ratio_b',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
       const reading = measurements[i]
@@ -1766,6 +2762,16 @@ function bootReferenceApp() {
         tsvNumber(reading.gamma, 1),
         reading.detect,
         reading.detectStrategy || 'manual',
+        reading.layout || '1ref',
+        tsvNumber(reading.fitRmsMm, 2),
+        tsvNumber(reading.scaleDrift, 3),
+        tsvNumber(reading.refAPx, 0),
+        tsvNumber(reading.refBPx, 0),
+        tsvNumber(reading.linesAngleDeg, 2),
+        tsvNumber(reading.linesSpreadMm, 2),
+        tsvNumber(reading.rawPointIn, 1),
+        tsvNumber(reading.scaleRatioA, 3),
+        tsvNumber(reading.scaleRatioB, 3),
       ].join('\t'))
     }
     return `${lines.join('\n')}\n`
@@ -1810,11 +2816,12 @@ function bootReferenceApp() {
 
   function saveReading() {
     if (!currentReading) {
-      showTemporaryInstruction(NEED_BOTH_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(twoRefLayout() ? NEED_REFS_INSTRUCTION : NEED_POINTS_INSTRUCTION, MESSAGE_HOLD_MS)
       return
     }
     measurements.push({
       mode: currentReading.mode,
+      layout: currentReading.layout,
       reference: currentReading.reference,
       inches: currentReading.inches,
       cm: currentReading.cm,
@@ -1825,6 +2832,18 @@ function bootReferenceApp() {
       gamma: currentReading.gamma,
       detect: currentReading.detect,
       detectStrategy: currentReading.detectStrategy || 'manual',
+      fitRmsMm: currentReading.fitRmsMm,
+      scaleDrift: currentReading.scaleDrift,
+      refAPx: currentReading.refAPx,
+      refBPx: currentReading.refBPx,
+      linesAngleDeg: currentReading.linesAngleDeg,
+      linesSpreadMm: currentReading.linesSpreadMm,
+      rawPointIn: currentReading.rawPointIn,
+      scaleRatioA: currentReading.scaleRatioA,
+      scaleRatioB: currentReading.scaleRatioB,
+      warningDisagree: currentReading.warningDisagree,
+      warningAngle: currentReading.warningAngle,
+      warningScale: currentReading.warningScale,
     })
     renderList()
     els.logButton.innerHTML = 'Saved'
@@ -1832,7 +2851,8 @@ function bootReferenceApp() {
     saveLabelTimer = setTimeout(() => {
       els.logButton.innerHTML = stackedLabel('Save', 'to list')
     }, 1200)
-    showTemporaryInstruction('Saved. Press Reset points or Retake for the next reading.', MESSAGE_HOLD_MS)
+    const again = twoRefLayout() ? 'Reset refs' : 'Reset points'
+    showTemporaryInstruction(`Saved. Press ${again} or Retake for the next reading.`, MESSAGE_HOLD_MS)
   }
 
   function noteCameraSize() {
@@ -1950,8 +2970,26 @@ function bootReferenceApp() {
   function bindControls() {
     els.floorModeButton.addEventListener('click', () => setMode('floor'))
     els.wallModeButton.addEventListener('click', () => setMode('wall'))
+    if (els.oneRefButton) els.oneRefButton.addEventListener('click', () => setLayout('one'))
+    if (els.twoRefButton) els.twoRefButton.addEventListener('click', () => setLayout('two'))
     els.cardReferenceButton.addEventListener('click', () => setReference('card'))
     els.letterReferenceButton.addEventListener('click', () => setReference('letter'))
+    if (els.customReferenceButton) els.customReferenceButton.addEventListener('click', () => setReference('custom'))
+    if (els.customApplyButton) els.customApplyButton.addEventListener('click', () => applyCustomReference())
+    if (els.customLongIn) {
+      els.customLongIn.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        applyCustomReference()
+      })
+    }
+    if (els.customShortIn) {
+      els.customShortIn.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return
+        event.preventDefault()
+        applyCustomReference()
+      })
+    }
     els.instructionText.addEventListener('click', () => toggleInstructionExpanded())
     els.instructionText.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return

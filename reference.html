@@ -109,6 +109,7 @@
     }
 
     #modeToggle,
+    #layoutToggle,
     #referenceToggle {
       display: flex;
       flex: 0 0 auto;
@@ -120,6 +121,7 @@
     }
 
     #modeToggle button,
+    #layoutToggle button,
     #referenceToggle button,
     #statusToggle {
       min-height: 26px;
@@ -135,6 +137,7 @@
     }
 
     #modeToggle button[aria-pressed="true"],
+    #layoutToggle button[aria-pressed="true"],
     #referenceToggle button[aria-pressed="true"] {
       background: #f4f1ea;
       color: #1a1714;
@@ -273,6 +276,10 @@
       max-height: 60vh;
     }
 
+    #readout.has-warning:not(.is-expanded) {
+      max-height: calc(168px + env(safe-area-inset-bottom, 0px));
+    }
+
     #sheetHandle {
       flex: 0 0 18px;
       display: flex;
@@ -347,6 +354,16 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    #resultWarning {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 0 8px 6px;
+      color: #ffcc66;
+      font-size: 0.68rem;
+      font-weight: 700;
+      line-height: 1.25;
     }
 
     #controls {
@@ -472,6 +489,57 @@
       font-size: 16px;
     }
 
+    #customReferencePopover {
+      position: fixed;
+      left: 8px;
+      right: 8px;
+      z-index: 6;
+      padding: 0.5rem 0.6rem 0.55rem;
+      background: rgba(8, 10, 12, 0.94);
+      border-radius: 10px;
+      pointer-events: auto;
+    }
+
+    #customReferencePopover p {
+      margin: 0.4rem 0 0;
+      color: #e6e0d6;
+      font-size: 0.68rem;
+      font-weight: 500;
+      line-height: 1.3;
+    }
+
+    .custom-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: flex-end;
+    }
+
+    .custom-fields label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      font-size: 0.68rem;
+      font-weight: 700;
+    }
+
+    #customReferencePopover input {
+      width: 5.4rem;
+      min-height: 36px;
+      padding: 0 0.4rem;
+      border: 0;
+      border-radius: 8px;
+      background: #f4f1ea;
+      color: #1a1714;
+      font: 600 0.9rem/1.2 inherit;
+      user-select: text;
+    }
+
+    #customApplyButton {
+      min-height: 36px;
+      padding: 0 0.8rem;
+    }
+
     [hidden] {
       display: none !important;
     }
@@ -489,9 +557,14 @@
       <button type="button" id="floorModeButton" aria-pressed="true" title="Floor (door width)">Floor</button>
       <button type="button" id="wallModeButton" aria-pressed="false" title="Wall (height)">Wall</button>
     </div>
+    <div id="layoutToggle" role="group" aria-label="Reference layout">
+      <button type="button" id="oneRefButton" aria-pressed="true" title="One reference">1 ref</button>
+      <button type="button" id="twoRefButton" aria-pressed="false" title="Two references">2 refs</button>
+    </div>
     <div id="referenceToggle" role="group" aria-label="Scale reference">
       <button type="button" id="cardReferenceButton" aria-pressed="true" title="Credit card">Card</button>
       <button type="button" id="letterReferenceButton" aria-pressed="false" title="Letter sheet">Sheet</button>
+      <button type="button" id="customReferenceButton" aria-pressed="false" title="Custom size">Custom</button>
     </div>
     <button type="button" id="statusToggle" aria-expanded="false" aria-controls="statusStrip" aria-label="Show status">ⓘ</button>
   </header>
@@ -506,7 +579,20 @@
     <button type="button" id="enableTiltButton" hidden>Enable tilt</button>
   </div>
 
-  <p id="instructionText" role="button" tabindex="0" aria-expanded="false">Lay the card (or sheet) on the floor between the jambs. Step back so both jambs and the card are in view, then Capture.</p>
+  <div id="customReferencePopover" hidden>
+    <div class="custom-fields">
+      <label>Long edge (in)
+        <input id="customLongIn" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="next">
+      </label>
+      <label>Short edge (in)
+        <input id="customShortIn" type="text" inputmode="decimal" autocomplete="off" enterkeyhint="done">
+      </label>
+      <button type="button" id="customApplyButton">Apply</button>
+    </div>
+    <p>Letter 11 × 8.5, Legal pad 11.75 × 8.5, A4 11.69 × 8.27, Credit card 3.370 × 2.125.</p>
+  </div>
+
+  <p id="instructionText" role="button" tabindex="0" aria-expanded="false">Lay the card (or sheet) on the floor on the line between the jambs. Step back so both jambs and the card are in view, then Capture.</p>
 
   <div id="stage">
     <video id="preview" playsinline webkit-playsinline muted autoplay></video>
@@ -529,6 +615,7 @@
         <button type="button" id="copyResultsButton">Copy<br>results</button>
       </div>
     </div>
+    <p id="resultWarning" hidden></p>
     <div id="belowFold" hidden>
       <details id="measurementList">
         <summary id="measurementSummary">Session list (0)</summary>
