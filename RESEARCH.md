@@ -78,7 +78,7 @@ which satisfies the stricter reading in BRIEF.md. A copy of the LICENSE text is 
 
 ## Reference method (credit card)
 
-A second tab, `reference.html`, measures from a still photo using a US credit card as the scale reference. No 8th Wall engine or SLAM is loaded on that page.
+A second tab, `reference.html`, measures from a still photo using a US credit card or a US Letter sheet as the scale reference. No 8th Wall engine or SLAM is loaded on that page.
 
 ### ISO/IEC 7810 ID-1
 
@@ -92,6 +92,8 @@ Once the four virtual corners are known, they are ordered top-left, top-right, b
 - **Wall mode:** card held flat against the wall; taps at the floor line and a height mark (for example floor to handrail).
 
 Everything is a still-image, planar-homography measurement: no SLAM, so no scale drift from the engine's camera-height estimate.
+
+The level gate was removed because a planar homography is exact for any camera angle; the accuracy driver is how many pixels the reference spans, not tilt, so tilt is only recorded. A US Letter sheet (279.4 mm × 215.9 mm) is the alternative reference because it is about 3.3× longer than the ID-1 card, which makes the same 1 px edge error a smaller fraction of the measurement.
 
 ### Error budget
 

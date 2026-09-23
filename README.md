@@ -7,11 +7,11 @@ useful, on a phone with no app install and no LiDAR?
 - `BRIEF.md` — the original spike brief (goal, scope, success criteria).
 - `RESEARCH.md` — verified integration findings and locked implementation decisions.
 - `index.html` / `app.js` — the SLAM tab (built by Grok Build, supervised from Claude Code).
-- `reference.html` / `reference.js` — the Reference tab (credit-card still-image measurement).
+- `reference.html` / `reference.js` — the Reference tab (credit-card or Letter-sheet still-image measurement).
 - `TEST-PROTOCOL.md` — how testers measure real doors and record results.
 
 Two tabs: **SLAM** (`index.html`) uses 8th Wall absolute-scale tracking to measure a door from two floor taps.
-**Reference** (`reference.html`) measures against a US credit card in a still photo (no SLAM, no 8th Wall).
+**Reference** (`reference.html`) measures against a US credit card in a still photo (no SLAM, no 8th Wall). A US Letter sheet (279.4 × 215.9 mm) is an alternative scale reference on that tab.
 
 Live page (GitHub Pages, served from `main`):
 https://nholzmann.github.io/adapta-slam-door-width-poc/
