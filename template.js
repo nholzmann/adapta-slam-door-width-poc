@@ -51,14 +51,30 @@ function fitPrintedPage() {
 
 function renderTemplatePage() {
   const page = document.getElementById('page')
-  if (!page || typeof TEMPLATE_LETTER_V1 === 'undefined') return
+  if (!page || typeof TEMPLATE_LETTER_V1 === 'undefined' || typeof templateInteriorLayoutIn !== 'function') return
   const spec = TEMPLATE_LETTER_V1
   const size = spec.markerSizeIn
+  const layout = templateInteriorLayoutIn()
   page.replaceChildren()
+
+  const frameInset = 0.4
+  const frame = document.createElement('div')
+  frame.className = 'clip-frame'
+  frame.style.cssText = inchStyle(
+    frameInset,
+    frameInset,
+    spec.pageIn[0] - 2 * frameInset,
+    spec.pageIn[1] - 2 * frameInset
+  )
+  const frameCaption = document.createElement('p')
+  frameCaption.className = 'clip-caption'
+  frameCaption.textContent = 'All four corners of this grey frame must be visible on the print. If any is missing, the printer clipped the page — use a larger margin or another printer.'
+  frame.append(frameCaption)
+  page.append(frame)
 
   const title = document.createElement('p')
   title.className = 'page-title'
-  title.textContent = 'ADAPTA door-width reference · Letter · v1 · print at 100 % (Actual size). Do not use \'Fit to page\'.'
+  title.textContent = 'ADAPTA door-width reference · Letter · v2 · print at 100 % (Actual size). Do not use \'Fit to page\'.'
   page.append(title)
 
   for (let i = 0; i < spec.ids.length; i++) {
@@ -71,46 +87,39 @@ function renderTemplatePage() {
     page.append(holder)
   }
 
-  const cardW = spec.cardOutlineIn[0]
-  const cardH = spec.cardOutlineIn[1]
-  const cardX = (spec.pageIn[0] - cardW) / 2
-  const cardY = (spec.pageIn[1] - cardH) / 2
   const card = document.createElement('div')
   card.className = 'card-outline'
-  card.style.cssText = inchStyle(cardX, cardY, cardW, cardH)
+  card.style.cssText = inchStyle(layout.card.x, layout.card.y, layout.card.w, layout.card.h)
   page.append(card)
 
   const cardLabel = document.createElement('p')
   cardLabel.className = 'card-label'
-  cardLabel.style.cssText = inchStyle(cardX - 0.4, cardY + cardH + 0.08, cardW + 0.8)
+  cardLabel.style.cssText = inchStyle(layout.cardCaption.x, layout.cardCaption.y, layout.cardCaption.w, layout.cardCaption.h)
   cardLabel.textContent = 'Lay a credit card inside this outline. If its edges do not line up with the box, the print is scaled.'
   page.append(cardLabel)
 
-  const barW = spec.barIn
-  const barX = (spec.pageIn[0] - barW) / 2
-  const barY = cardY + cardH + 0.55
-  const bar = document.createElement('div')
-  bar.className = 'scale-bar'
-  bar.style.cssText = inchStyle(barX, barY, barW, 0.55)
   const line = document.createElement('div')
   line.className = 'scale-bar-line'
-  bar.append(line)
-  for (let inch = 0; inch <= 6; inch++) {
+  line.style.cssText = inchStyle(layout.barLine.x, layout.barLine.y, layout.barLine.w, layout.barLine.h)
+  page.append(line)
+
+  for (let i = 0; i < layout.ticks.length; i++) {
+    const tickBox = layout.ticks[i]
     const tick = document.createElement('div')
     tick.className = 'scale-tick'
-    tick.style.left = `${inch}in`
-    bar.append(tick)
+    tick.style.cssText = inchStyle(tickBox.x, tickBox.y, tickBox.w, tickBox.h)
+    page.append(tick)
+    const numBox = layout.nums[i]
     const num = document.createElement('p')
     num.className = 'scale-num'
-    num.style.left = `${inch}in`
-    num.textContent = String(inch)
-    bar.append(num)
+    num.style.cssText = inchStyle(numBox.x, numBox.y, numBox.w, numBox.h)
+    num.textContent = numBox.label
+    page.append(num)
   }
-  page.append(bar)
 
   const barLabel = document.createElement('p')
   barLabel.className = 'bar-label'
-  barLabel.style.cssText = inchStyle(barX, barY + 0.52, barW)
+  barLabel.style.cssText = inchStyle(layout.barCaption.x, layout.barCaption.y, layout.barCaption.w, layout.barCaption.h)
   barLabel.textContent = 'This bar should measure 6.00 in with a tape measure.'
   page.append(barLabel)
 

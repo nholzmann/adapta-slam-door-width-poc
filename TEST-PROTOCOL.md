@@ -111,12 +111,13 @@ The camera fills the screen. The top bar is one translucent row: **SLAM** / **Re
 
 This is the measurement to try first when you can print. Shadows and floor planks cannot be mistaken for the sheet because each corner has an ArUco marker with an id.
 
-1. Open **Template** in the top bar. Print the Letter landscape page at **100 % (Actual size)**. Do not use “Fit to page”.
-2. After printing, lay a credit card inside the centre outline. If its edges do not line up with the box, the print is scaled — do not use that copy, or measure the 6 in bar and type that length into **Bar measured (in)** on the Reference picker (that number wins over the automatic paper-edge scale).
-3. Check the 6.00 in bar with a tape measure. It should read 6.00. If it reads 5.82, enter `5.82` in **Bar measured (in)**.
-4. On **Reference**, choose **Printed template (Letter) — best**, then **Floor** or **Wall**, and **1 ref** or **2 refs**. Mode, layout, and reference lock after Capture.
-5. Lay the sheet on the threshold line (any orientation is fine). Step back so both jambs and the sheet are in view. Tap **Capture**, then tap the sheet.
-6. The page looks for markers 0–3. A green flash means check that the yellow quad sits on the **outermost corner of each marker** (the rectangle that is 9.80 × 7.30 in on a 100 % print). Confirm, then place the two jamb points (1 ref) or tap the second sheet (2 refs).
+1. Open **Template** in the top bar. Print the Letter landscape page at **100 % (Actual size)**. Do not use “Fit to page”. The title on the sheet must say **v2**. Discard any print whose title says v1 — those sheets used a 0.60 in margin, and the bottom markers may be clipped even when white paper still shows below them.
+2. Check the thin grey frame. All four corners of that frame must be visible on the paper. If any corner is missing, the printer clipped the page — use a larger margin or another printer, and do not measure with that sheet.
+3. After printing, lay a credit card inside the centre outline. If its edges do not line up with the box, the print is scaled — do not use that copy, or measure the 6 in bar and type that length into **Bar measured (in)** on the Reference picker (that number wins over the automatic paper-edge scale).
+4. Check the 6.00 in bar with a tape measure. It should read 6.00. If it reads 5.82, enter `5.82` in **Bar measured (in)**.
+5. On **Reference**, choose **Printed template (Letter) — best**, then **Floor** or **Wall**, and **1 ref** or **2 refs**. Mode, layout, and reference lock after Capture.
+6. Lay the sheet on the threshold line (any orientation is fine). Step back so both jambs and the sheet are in view. Tap **Capture**, then tap the sheet.
+7. The page looks for markers 0–3. A green flash means check that the yellow quad sits on the **outermost corner of each marker** (the rectangle that is 9.30 × 6.80 in on a 100 % print). Confirm, then place the two jamb points (1 ref) or tap the second sheet (2 refs).
 
 The meta line may show **print ×0.97 (paper)** or **print ×0.97 (bar)** or **print unverified**.
 

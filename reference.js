@@ -117,23 +117,125 @@ function scaleDriftWarn(refAPx, refBPx) {
 }
 
 // Letter landscape, origin top-left, inches. Outer black of each marker is
-// 2.00 in. Shared by the printable page and the detector.
+// 2.00 in. Shared by the printable page and the detector. v2 pulls the
+// markers in to a 0.85 in margin so a home printer's unprintable top strip
+// cannot clip the bottom row. Marker ids and size are unchanged.
 const TEMPLATE_LETTER_V1 = {
   ids: [0, 1, 2, 3],
   markerSizeIn: 2.0,
   outerSquaresIn: {
-    0: [0.60, 0.60, 2.60, 2.60],
-    1: [8.40, 0.60, 10.40, 2.60],
-    2: [8.40, 5.90, 10.40, 7.90],
-    3: [0.60, 5.90, 2.60, 7.90],
+    0: [0.85, 0.85, 2.85, 2.85],
+    1: [8.15, 0.85, 10.15, 2.85],
+    2: [8.15, 5.65, 10.15, 7.65],
+    3: [0.85, 5.65, 2.85, 7.65],
   },
   pageIn: [11, 8.5],
   cardOutlineIn: [3.370, 2.125],
   barIn: 6.0,
+  cardYIn: 2,
+  barLineYIn: 5.2,
 }
 
-const TEMPLATE_OUTER_LONG_IN = 9.80
-const TEMPLATE_OUTER_SHORT_IN = 7.30
+// Outermost marker corners. Long is the x span, short the y span.
+function templateOuterExtentIn() {
+  const ids = TEMPLATE_LETTER_V1.ids
+  const squares = TEMPLATE_LETTER_V1.outerSquaresIn
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (let i = 0; i < ids.length; i++) {
+    const square = squares[ids[i]]
+    if (square[0] < minX) minX = square[0]
+    if (square[1] < minY) minY = square[1]
+    if (square[2] > maxX) maxX = square[2]
+    if (square[3] > maxY) maxY = square[3]
+  }
+  return {minX, minY, maxX, maxY}
+}
+
+const TEMPLATE_OUTER_EXTENT_IN = templateOuterExtentIn()
+const TEMPLATE_OUTER_LONG_IN = TEMPLATE_OUTER_EXTENT_IN.maxX - TEMPLATE_OUTER_EXTENT_IN.minX
+const TEMPLATE_OUTER_SHORT_IN = TEMPLATE_OUTER_EXTENT_IN.maxY - TEMPLATE_OUTER_EXTENT_IN.minY
+
+// Interior ink, in page inches. Marker squares expanded by 0.25 in are
+//   id0 [0.60, 3.10] × [0.60, 3.10], id1 [7.90, 10.40] × [0.60, 3.10],
+//   id2 [7.90, 10.40] × [5.40, 7.90], id3 [0.60, 3.10] × [5.40, 7.90].
+// x ∈ (3.10, 7.90) misses all four; y ∈ (3.10, 5.40) misses all four.
+// Card x = (11 − 3.370) / 2 = 3.815, so [3.815, 7.185] × [2, 4.125]
+//   is inside the x-gap and inside y [1.10, 7.40].
+// Card caption is 4.60 in centred: [3.20, 7.80] × [4.210, 4.570]
+//   (top = 4.125 + 0.085). Inside the x-gap, below the card.
+// Bar line x = (11 − 6) / 2 = 2.50, stroke 1.2 pt = 1.2/72 in:
+//   [2.50, 8.50] × [5.200, 5.217]. Inside the y-gap, 0.433 in above the
+//   bottom marker tops at 5.65.
+// Ticks sit on the line from above: y [5.020, 5.200], including the end
+//   ticks at x = 2.50 and x = 8.50. 8 pt labels (8/72 in) start 0.02 in
+//   under the stroke: y [5.237, 5.348], still below 5.40, so the end
+//   labels at x [2.30, 2.70] and [8.30, 8.70] miss id3 and id2.
+// Bar caption is the same 4.60 in centred band, 0.07 in under the labels:
+//   [3.20, 7.80] × [5.418, 5.578]. Inside the x-gap and under y 7.40.
+// Those boxes are pairwise disjoint (gaps 0.085, 0.450, 0.020, 0.070 in;
+// ticks meet the line only on the shared edge) and none meets an expanded
+// marker. The 6.00 in line cannot fit in the 4.80 in x-band; only its
+// ends, ticks, and end labels leave x [3.10, 7.90], and those stay in
+// the y-gap.
+function templateInteriorLayoutIn() {
+  const spec = TEMPLATE_LETTER_V1
+  const cardW = spec.cardOutlineIn[0]
+  const cardH = spec.cardOutlineIn[1]
+  const cardX = (spec.pageIn[0] - cardW) / 2
+  const cardY = spec.cardYIn
+  const barW = spec.barIn
+  const barX = (spec.pageIn[0] - barW) / 2
+  const lineY = spec.barLineYIn
+  const strokeIn = 1.2 / 72
+  const numH = 8 / 72
+  const captionW = 4.6
+  const captionX = (spec.pageIn[0] - captionW) / 2
+  const tickH = 0.18
+  const numY = lineY + strokeIn + 0.02
+  const ticks = []
+  const nums = []
+  for (let inch = 0; inch <= 6; inch++) {
+    const x = barX + inch
+    ticks.push({
+      name: `tick${inch}`,
+      x: x - 0.5 / 72,
+      y: lineY - tickH,
+      w: 1 / 72,
+      h: tickH,
+    })
+    nums.push({
+      name: `num${inch}`,
+      x: x - 0.2,
+      y: numY,
+      w: 0.4,
+      h: numH,
+      label: String(inch),
+    })
+  }
+  return {
+    card: {name: 'card', x: cardX, y: cardY, w: cardW, h: cardH},
+    cardCaption: {
+      name: 'cardCaption',
+      x: captionX,
+      y: cardY + cardH + 0.085,
+      w: captionW,
+      h: 0.36,
+    },
+    barLine: {name: 'barLine', x: barX, y: lineY, w: barW, h: strokeIn},
+    ticks,
+    nums,
+    barCaption: {
+      name: 'barCaption',
+      x: captionX,
+      y: numY + numH + 0.07,
+      w: captionW,
+      h: 0.16,
+    },
+  }
+}
 
 function templatePrintScale(printScale) {
   if (printScale > 0 && Number.isFinite(printScale)) return printScale
@@ -186,11 +288,12 @@ function templateMarkerOuterCornersMm(id, printScale) {
 
 function templateOuterQuadMm(printScale) {
   const s = templatePrintScale(printScale) * MM_PER_INCH
+  const extent = TEMPLATE_OUTER_EXTENT_IN
   return [
-    {x: 0.60 * s, y: 0.60 * s},
-    {x: 10.40 * s, y: 0.60 * s},
-    {x: 10.40 * s, y: 7.90 * s},
-    {x: 0.60 * s, y: 7.90 * s},
+    {x: extent.minX * s, y: extent.minY * s},
+    {x: extent.maxX * s, y: extent.minY * s},
+    {x: extent.maxX * s, y: extent.maxY * s},
+    {x: extent.minX * s, y: extent.maxY * s},
   ]
 }
 
@@ -1581,6 +1684,7 @@ if (typeof module !== 'undefined' && module.exports) {
     FIT_RMS_WARN_MM,
     MARKER_RMS_WARN_MM,
     TEMPLATE_LETTER_V1,
+    TEMPLATE_OUTER_EXTENT_IN,
     TEMPLATE_OUTER_LONG_IN,
     TEMPLATE_OUTER_SHORT_IN,
     orderCorners,
@@ -1600,6 +1704,7 @@ if (typeof module !== 'undefined' && module.exports) {
     referenceToken,
     scaleDriftWarn,
     templateReference,
+    templateInteriorLayoutIn,
     templateMarkerOuterCornersIn,
     templateMarkerOuterCornersMm,
     templateOuterQuadMm,
