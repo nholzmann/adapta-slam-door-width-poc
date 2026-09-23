@@ -101,32 +101,34 @@ The on-page list shows the same readings. When that reading was calibrated, the 
 
 ## Reference tab
 
-This tab does not use SLAM. It takes a still photo, uses a credit card or a Letter sheet in the picture as the scale, then converts two taps through that plane into inches. Use it on the same doors as the SLAM tab so the two methods can be compared. Open **Reference** at the top of the page (full navigation; the camera from SLAM is released).
+This tab does not use SLAM. It takes a still photo, uses a credit card or a Letter sheet in the picture as the scale, then converts two points on that plane into inches. Use it on the same doors as the SLAM tab so the two methods can be compared. Open **Reference** in the top bar (full navigation; the camera from SLAM is released).
+
+The camera fills the screen. The top bar is one translucent row: **SLAM** / **Reference** pills, then **Floor** / **Wall** and **Card** / **Sheet**, then **ⓘ**. ⓘ shows or hides the status line (vision library, camera size, tilt). On iPhone, **Enable tilt** is on that line; it only records the angle. The instruction under the bar is one line; tap it to read the rest. The bottom sheet is collapsed to one row: the result on the left, the four buttons on the right. Tap the handle (the bar and the chevron) to open the session list, the debug log, and the credits. While your finger is down on a point, the sheet and the instruction hide so they do not cover the magnifier or the edge of the photo.
 
 Needs a physical **credit card, debit card, or other ISO ID-1 card** (the common US wallet card, 85.60 mm × 53.98 mm), or a **US Letter sheet** (279.4 mm × 215.9 mm). A business card or a phone is the wrong size. A Letter sheet gives about three times the accuracy of a card. Try both on the same door.
 
-Any comfortable camera angle is fine. The page does not need the phone to be level. On iPhone, **Enable tilt** only records the angle; Capture never waits for it.
+Any comfortable camera angle is fine. The page does not need the phone to be level. Capture never waits for tilt.
 
 ### Floor mode (door width)
 
 1. Tape-measure the door first, the same way as the SLAM section.
-2. Choose **Credit card** or **Letter sheet**, and **Floor (door width)** if it is not already selected. Mode and reference cannot be changed after Capture.
+2. Choose **Card** or **Sheet**, and **Floor** if it is not already selected. Mode and reference cannot be changed after Capture.
 3. Lay the card or sheet **on the floor between the jambs**.
 4. Step back so **both jambs and the reference are in view**. Turn the phone sideways (landscape) if the door does not fit. Aim at the threshold at whatever angle is comfortable.
 5. Get the reference **at least as big as the dashed box** ("card at least this big" or "sheet at least this big"). If the box says the reference is small after you confirm it, Retake from closer.
 6. Tap **Capture**.
-7. Tap the reference. Check that the yellow quad sits on the four edges (the handles are the virtual sharp corners, slightly outside rounded corners). Drag with the loupe if needed, then tap **Confirm card** or **Confirm sheet**.
-8. Tap point A at the **left jamb at the floor**, then point B at the **right jamb at the floor**. Drag the dots if the tap landed off the jamb.
+7. Tap the reference. The page looks for the card or sheet on its own. A green flash and **Card found — check the corners, then Confirm** (or **Sheet found**) means check that the yellow quad sits on the four edges. The handles are the virtual sharp corners, slightly outside rounded corners. Press a handle and the magnifier appears immediately; slide it if a corner is off. An amber flash and **Card not found — drag the corners onto its edges** (or **Sheet not found**) means detection missed: drag each corner onto an edge. Then tap **Confirm card** or **Confirm sheet**.
+8. Place the jamb points by press-and-slide. Press on the left jamb base, keep your finger down, slide until the crosshair sits where the jamb meets the floor, then lift. Do the same for the right jamb. The round magnifier stays above your finger (or below it near the top of the screen), and a faint vertical line shows whether the point is on the jamb edge. A quick tap still leaves the point where the finger landed; sliding is how you line it up. In the first phone test, redoing only these two taps on the same photo changed the reading by up to 1.7 in. Take your time on the taps. That placement is the largest error.
 9. Tap **Save to list**. Repeat for **three** captures per door (Retake between them, not only Reset points). Reset points keeps the reference and clears A/B; Retake takes a new photo.
 
 ### Wall mode (one per tester)
 
-Do this once per person, not once per door. The same rules apply: any comfortable angle, and the reference at least as big as the dashed box.
+Do this once per person, not once per door. The same rules apply: any comfortable angle, the reference at least as big as the dashed box, and press-and-slide for both points.
 
 1. Tape-measure a known height (floor to a handrail, or floor to a piece of tape).
 2. Hold the card or sheet **flat against the wall** at that height (or anywhere on the wall in the same plane).
-3. Switch to **Wall (height)** *before* Capture. Get the **floor line** and the **height mark** in view, then Capture.
-4. Tap the reference, confirm the corners, tap point A on the **floor line**, tap point B at the **top of the handrail or tape**.
+3. Switch to **Wall** *before* Capture. Get the **floor line** and the **height mark** in view, then Capture.
+4. Tap the reference, confirm the corners, then press-and-slide point A onto the **floor line** and point B onto the **top of the handrail or tape**.
 5. Save to list. Write `method = Reference` and `Wall` in notes.
 
 ### Copy results (Reference)
@@ -134,8 +136,8 @@ Do this once per person, not once per door. The same rules apply: any comfortabl
 The Reference **Copy results** paste is tab-separated and looks like this:
 
 ```
-n	mode	reference	inches	cm	card_long_px	image_w	image_h	tilt_beta	tilt_gamma	detect
-1	floor	card	36.1	91.7	214	3840	2160	43.0	-1.2	auto
+n	mode	reference	inches	cm	card_long_px	image_w	image_h	tilt_beta	tilt_gamma	detect	detect_strategy
+1	floor	card	36.1	91.7	214	3840	2160	43.0	-1.2	auto	edges50
 ```
 
-`reference` is `card` or `letter`. `card_long_px` is the reference's long edge in the photo, for either choice. `tilt_beta` and `tilt_gamma` are degrees at the moment of Capture, or `none` if tilt was not available. `detect` is `auto` if the reference was found and the corners were not dragged more than 3 px, otherwise `manual`. The list is only in the phone's memory. Closing the tab clears it.
+`reference` is `card` or `letter`. `card_long_px` is the reference's long edge in the photo, for either choice. `tilt_beta` and `tilt_gamma` are degrees at the moment of Capture, or `none` if tilt was not available. `detect` is `auto` if the reference was found and the corners were not dragged more than 3 px, otherwise `manual`. `detect_strategy` is which search found the outline: `edges30`, `edges50`, `edges80`, `flood18`, `flood30`, `otsu`, or `otsu-inv`. It is `manual` when none of those matched and the page used the default rectangle. If you drag an auto-found corner more than 3 px, `detect` becomes `manual` and `detect_strategy` stays the search that found it. The list is only in the phone's memory. Closing the tab clears it.
