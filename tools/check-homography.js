@@ -134,7 +134,8 @@ const letterWorld = [
 ]
 const letterPixels = letterWorld.map((p) => projectFloor(p.x, p.y))
 const letterShuffled = [letterPixels[2], letterPixels[0], letterPixels[3], letterPixels[1]]
-const letterFit = ref.homographyPixelsToMm(letterShuffled, letter)
+// Principal point is the image centre, so the aspect check can run.
+const letterFit = ref.homographyPixelsToMm(letterShuffled, letter, principal.x * 2, principal.y * 2)
 if (!letterFit || !letterFit.H) fail('letter homographyPixelsToMm returned null')
 
 const letterFloorA = {x: -TARGET_MM / 2, y: 30}
@@ -237,7 +238,9 @@ const worldCardB = [
 ]
 const pixelsA = worldCardA.map((p) => projectYawed(p.x, p.y))
 const pixelsB = worldCardB.map((p) => projectYawed(p.x, p.y))
-const twoRef = ref.twoReferenceDestinationMm(pixelsA, pixelsB, ref.CARD_REF, 'floor')
+const yawImageW = yawPrincipal.x * 2
+const yawImageH = yawPrincipal.y * 2
+const twoRef = ref.twoReferenceDestinationMm(pixelsA, pixelsB, ref.CARD_REF, 'floor', yawImageW, yawImageH)
 if (!twoRef) fail('two-reference measurement returned null')
 const twoRefErr = Math.abs(twoRef.widthMm - TARGET_MM)
 if (twoRefErr > 0.5) {
@@ -271,7 +274,7 @@ function noisify(corners) {
     y: p.y + 0.5 * gaussianish(noiseRng),
   }))
 }
-const noisy = ref.twoReferenceDestinationMm(noisify(pixelsA), noisify(pixelsB), ref.CARD_REF, 'floor')
+const noisy = ref.twoReferenceDestinationMm(noisify(pixelsA), noisify(pixelsB), ref.CARD_REF, 'floor', yawImageW, yawImageH)
 if (!noisy) fail('noisy two-reference measurement returned null')
 const noisyErr = Math.abs(noisy.widthMm - TARGET_MM)
 if (noisyErr > 5) {
@@ -330,7 +333,9 @@ const turned = ref.twoReferenceDestinationMm(
   cardOnFloor(0, cardShort, cardLong),
   cardOnFloor(TARGET_MM - cardShort, cardShort, cardLong),
   ref.CARD_REF,
-  'floor'
+  'floor',
+  yawImageW,
+  yawImageH
 )
 const turnedErr = expectOrient(turned, 'two-ref both long-along-jamb', 'short-across', 'short-across')
 
@@ -338,7 +343,9 @@ const mixed = ref.twoReferenceDestinationMm(
   cardOnFloor(0, cardShort, cardLong),
   cardOnFloor(TARGET_MM - cardLong, cardLong, cardShort),
   ref.CARD_REF,
-  'floor'
+  'floor',
+  yawImageW,
+  yawImageH
 )
 const mixedErr = expectOrient(mixed, 'two-ref A turned, B not', 'short-across', 'long-across')
 
@@ -412,8 +419,8 @@ if (ref.referenceToken(ref.NOTEPAD_REF) !== 'notepad:11.5x8.5') {
 if (ref.referenceToken(ref.A4_REF) !== 'a4:11.69x8.27') {
   fail(`a4 token ${ref.referenceToken(ref.A4_REF)}, expected a4:11.69x8.27`)
 }
-if (ref.referenceToken(ref.templateReference(0.97)) !== 'template:letter-v1') {
-  fail(`template token ${ref.referenceToken(ref.templateReference(0.97))}, expected template:letter-v1`)
+if (ref.referenceToken(ref.templateReference(0.97)) !== 'template:letter-v2') {
+  fail(`template token ${ref.referenceToken(ref.templateReference(0.97))}, expected template:letter-v2`)
 }
 if (ref.FIT_RMS_WARN_MM !== 3) fail(`FIT_RMS_WARN_MM ${ref.FIT_RMS_WARN_MM}, expected 3`)
 if (ref.scaleDriftWarn(300, 280) !== 0.15) fail('scaleDriftWarn should be 0.15 when both long edges are under 400 px')
@@ -626,12 +633,116 @@ const twoTemplate = ref.twoReferenceDestinationMm(
   projectTemplateQuad(originA.x, originA.y, PRINT_S, projectYawed),
   projectTemplateQuad(originB.x, originB.y, PRINT_S, projectYawed),
   ref.templateReference(PRINT_S),
-  'floor'
+  'floor',
+  yawImageW,
+  yawImageH
 )
 if (!twoTemplate) fail('two-ref templates returned null')
 const twoTemplateErr = Math.abs(twoTemplate.widthMm - TARGET_MM)
 if (twoTemplateErr > 0.5) {
   fail(`two-ref templates recovered ${twoTemplate.widthMm.toFixed(4)} mm (err ${twoTemplateErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+// Letter with the 11 in edge along depth (away from the camera). At 45°
+// that edge is shorter in pixels than the 8.5 in edge, so the old
+// pixel-length rule scales a 36 in door by about 11/8.5.
+function projectLookAtOrigin(cam, focal, principalPt, worldX, worldY) {
+  const look = vecNorm({x: -cam.x, y: -cam.y, z: -cam.z})
+  const camRight = vecNorm(vecCross(look, {x: 0, y: 0, z: 1}))
+  const camDown = vecCross(look, camRight)
+  const delta = {x: worldX - cam.x, y: worldY - cam.y, z: -cam.z}
+  const camX = vecDot(camRight, delta)
+  const camY = vecDot(camDown, delta)
+  const camZ = vecDot(look, delta)
+  if (camZ <= 1) fail(`depth-letter point (${worldX}, ${worldY}) is behind the camera`)
+  return {
+    x: focal * (camX / camZ) + principalPt.x,
+    y: focal * (camY / camZ) + principalPt.y,
+  }
+}
+
+function normSheetAspect(aspect) {
+  if (!aspect || !(aspect.ratio > 0)) fail('rectangleAspectFromPerspective returned null')
+  return aspect.ratio >= 1 ? aspect.ratio : 1 / aspect.ratio
+}
+
+function depthLetterScene(cam, imageW, imageH, focalArg) {
+  const sceneFocal = 1500
+  const principalPt = {x: imageW / 2, y: imageH / 2}
+  const halfLong = ref.LETTER_LONG_MM / 2
+  const halfShort = ref.LETTER_SHORT_MM / 2
+  const world = [
+    {x: -halfShort, y: -halfLong},
+    {x: halfShort, y: -halfLong},
+    {x: halfShort, y: halfLong},
+    {x: -halfShort, y: halfLong},
+  ]
+  const pixels = world.map((p) => projectLookAtOrigin(cam, sceneFocal, principalPt, p.x, p.y))
+  const shuffled = [pixels[2], pixels[0], pixels[3], pixels[1]]
+  const ordered = ref.orderCorners(shuffled)
+  const aspect = ref.rectangleAspectFromPerspective(ordered, imageW, imageH, focalArg)
+  const fit = ref.homographyPixelsToMm(shuffled, ref.LETTER_REF, imageW, imageH, focalArg)
+  if (!fit || !fit.H) fail('depth-letter homographyPixelsToMm returned null')
+  const pxA = projectLookAtOrigin(cam, sceneFocal, principalPt, -TARGET_MM / 2, 0)
+  const pxB = projectLookAtOrigin(cam, sceneFocal, principalPt, TARGET_MM / 2, 0)
+  const mm = ref.planarDistanceMm(fit.H, pxA, pxB)
+  if (mm == null) fail('depth-letter planarDistanceMm returned null')
+  const oldFit = ref.homographyPixelsToMm(shuffled, ref.LETTER_REF)
+  if (!oldFit || !oldFit.H) fail('depth-letter old-rule homography returned null')
+  const oldMm = ref.planarDistanceMm(oldFit.H, pxA, pxB)
+  if (oldMm == null) fail('depth-letter old-rule distance returned null')
+  const pairA = (Math.hypot(ordered[0].x - ordered[1].x, ordered[0].y - ordered[1].y)
+    + Math.hypot(ordered[2].x - ordered[3].x, ordered[2].y - ordered[3].y)) / 2
+  const pairB = (Math.hypot(ordered[1].x - ordered[2].x, ordered[1].y - ordered[2].y)
+    + Math.hypot(ordered[3].x - ordered[0].x, ordered[3].y - ordered[0].y)) / 2
+  return {mm, oldMm, aspect, pairA, pairB}
+}
+
+const letterRatio = ref.LETTER_LONG_MM / ref.LETTER_SHORT_MM
+const depthCam = {x: 0, y: -1200, z: 1200}
+const knownDepth = depthLetterScene(depthCam, 2000, 1500, 1500)
+if (!(knownDepth.pairA > knownDepth.pairB)) {
+  fail(`11 in edge was not the shorter pixel pair (${knownDepth.pairA.toFixed(1)} vs ${knownDepth.pairB.toFixed(1)})`)
+}
+nearly(normSheetAspect(knownDepth.aspect), letterRatio, 0.01, 'known-f Letter aspect')
+if (knownDepth.aspect.focalSource !== 'given') {
+  fail(`known-f focalSource ${knownDepth.aspect.focalSource}, expected given`)
+}
+const knownDepthErr = Math.abs(knownDepth.mm - TARGET_MM)
+if (knownDepthErr > 0.5) {
+  fail(`known-f depth Letter recovered ${knownDepth.mm.toFixed(4)} mm (err ${knownDepthErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+const estimatedDepth = depthLetterScene({x: 400, y: -1200, z: 1200}, 2000, 1500, null)
+if (!estimatedDepth.aspect || estimatedDepth.aspect.focalSource !== 'estimated') {
+  fail(`estimated focalSource ${estimatedDepth.aspect && estimatedDepth.aspect.focalSource}`)
+}
+nearly(estimatedDepth.aspect.focalPx, 1500, 1, 'estimated focal px')
+nearly(normSheetAspect(estimatedDepth.aspect), letterRatio, 0.01, 'estimated Letter aspect')
+const estimatedDepthErr = Math.abs(estimatedDepth.mm - TARGET_MM)
+if (estimatedDepthErr > 0.5) {
+  fail(`estimated-f depth Letter recovered ${estimatedDepth.mm.toFixed(4)} mm (err ${estimatedDepthErr.toFixed(4)} mm > 0.5 mm)`)
+}
+
+// Centred sheet: the across edges are parallel, so f is not observable and
+// the fallback is used. Image width 2500 makes 0.72 × max side = 1800,
+// 20% above the true 1500 px focal length.
+const fallbackDepth = depthLetterScene(depthCam, 2500, 1600, null)
+if (!fallbackDepth.aspect || fallbackDepth.aspect.focalSource !== 'fallback') {
+  fail(`20% fallback focalSource ${fallbackDepth.aspect && fallbackDepth.aspect.focalSource}`)
+}
+nearly(fallbackDepth.aspect.focalPx, 0.72 * 2500, 1e-6, 'fallback focal 20% high')
+const fallbackDepthErr = Math.abs(fallbackDepth.mm - TARGET_MM)
+if (fallbackDepthErr > 20) {
+  fail(`20% fallback orientation failed: width ${fallbackDepth.mm.toFixed(4)} mm (err ${fallbackDepthErr.toFixed(4)} mm)`)
+}
+
+const oldFactor = knownDepth.oldMm / TARGET_MM
+nearly(oldFactor, letterRatio, 0.02, 'old pixel-length scale factor')
+const appRule = depthLetterScene(depthCam, 2000, 1500, null)
+const appRuleErr = Math.abs(appRule.mm - TARGET_MM)
+if (appRuleErr > 0.5) {
+  fail(`new rule (null focal) recovered ${appRule.mm.toFixed(4)} mm (err ${appRuleErr.toFixed(4)} mm > 0.5 mm)`)
 }
 
 console.log('orderCorners: TL/TR/BR/BL recovered from shuffled pixels')
@@ -656,4 +767,8 @@ console.log(`template 0.97 print uncorrected: ${uncorrectedMm.toFixed(4)} mm (ta
 console.log(`template 0.97 print corrected: ${correctedMm.toFixed(4)} mm (err ${correctedErr.toExponential(3)} mm); paper s=${paperScale.printScale.toFixed(4)}`)
 console.log(`template 3-marker recovered: ${threeMm.toFixed(4)} mm`)
 console.log(`two-ref templates error: ${twoTemplateErr.toExponential(3)} mm (limit 0.5 mm); ${twoTemplate.orientA}/${twoTemplate.orientB}`)
+console.log(`depth-letter known f: aspect ${normSheetAspect(knownDepth.aspect).toFixed(4)} (wh ${knownDepth.aspect.ratio.toFixed(4)}, ${knownDepth.aspect.focalSource}); width err ${knownDepthErr.toExponential(3)} mm`)
+console.log(`depth-letter estimated f: aspect ${normSheetAspect(estimatedDepth.aspect).toFixed(4)} (f ${estimatedDepth.aspect.focalPx.toFixed(1)} ${estimatedDepth.aspect.focalSource}); width err ${estimatedDepthErr.toExponential(3)} mm`)
+console.log(`depth-letter fallback f 20% high: f ${fallbackDepth.aspect.focalPx.toFixed(1)} vs true 1500; aspect ${normSheetAspect(fallbackDepth.aspect).toFixed(4)}; width ${fallbackDepth.mm.toFixed(4)} mm; err ${fallbackDepthErr.toFixed(4)} mm`)
+console.log(`depth-letter old pixel rule: ${knownDepth.oldMm.toFixed(4)} mm (${oldFactor.toFixed(3)}×); new rule: ${appRule.mm.toFixed(4)} mm (err ${appRuleErr.toExponential(3)} mm)`)
 console.log('PASS')

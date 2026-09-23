@@ -123,6 +123,22 @@ Lens calibration from the template is not this round.
 
 A two-card reading of 22.5 in on a 23.0 in door was flagged “references disagree” with `scale_drift` 2.36. The drift check extrapolates a single ~300 px card across the whole gap, so it is noisy when both long edges are small. `SCALE_DRIFT_WARN` is 0.15 when both long edges are under 400 px, and 0.05 otherwise. `FIT_RMS_WARN_MM` is 3 mm (was 2 mm) for the same reason.
 
+### Plain-paper aspect from perspective
+
+Assigning long and short by pixel length fails when the long edge points away from the camera. A Letter sheet with its 11 in edge perpendicular to a 36 in door (that edge foreshortened until it was shorter in the image than the 8.5 in edge) read **48.4 in**. The scale ratio at the tap was 1.468, just under the old 1.5 warning, so the bad width was not flagged. The warning threshold is now 1.3.
+
+The replacement is the rectangle aspect recovery in Zhang and He, "Whiteboard scanning and image enhancement", *Digital Signal Processing* 17 (2007). For image corners ordered TL, TR, BR, BL, with the principal point at the image centre, homogeneous points are `m_i = (x_i − u0, y_i − v0, 1)`. BR, the corner opposite TL, is the auxiliary point of the two pencils. With `k_tr`, `k_bl` the coefficients that put `n_tr = k_tr·m_tr − m_tl` and `n_bl = k_bl·m_bl − m_tl` on those edge directions,
+
+`f² = −(n_tr.x·n_bl.x + n_tr.y·n_bl.y) / (n_tr.z·n_bl.z)`
+
+when both `|k − 1| > 1e-3` (neither edge pair is parallel in the image). The estimate is kept only if `f² > 0` and `f` is between 0.45 and 1.6 times the longer image side. Otherwise `f = 0.72 × max(imageW, imageH)`, a typical phone main camera (~70° horizontal). The physical ratio of TL→TR to TL→BL is
+
+`whRatio² = (n_tr.x² + n_tr.y² + n_tr.z²·f²) / (n_bl.x² + n_bl.y² + n_bl.z²·f²)`.
+
+The edge pair whose ratio is closer in log space to the sheet's long/short than to its reciprocal is the long side. The same `whRatio`, taken door-edge over jamb-edge, breaks orientation ties in the two-reference fit. If the quad is degenerate the pixel-length rule remains. A synthetic 45° view of that 36 in failure is about 1.29× too wide under the old rule and 914.4 mm under the new one, including when the focal length is estimated and when the fallback focal length is 20% off. The meta line records the recovered long/short (`aspect`, Letter ≈ 1.29 either way the sheet is laid) and whether `f` was estimated or the fallback.
+
+Printed markers are tried on every tap before the picker's outline search. Two or more template markers use the outer-marker quad regardless of the picker (`reference` `template:letter-v2`, `auto_markers` `y`). The picker still selects the plain-paper size. A Printed-template picker with no markers falls back to plain Letter.
+
 ### Why this tab exists (SLAM field test)
 
 A taped **32.0 in** door read **21.1 in** on the SLAM tab, with the engine's camera-height estimate at **0.81 m** (it wandered 0.47–1.76 m across the session). Scale drift is confirmed. That is not viable at the ±0.5 in success line, which is why this still-image planar method exists as a second measurement.
