@@ -26,13 +26,20 @@ const GUIDE_LONG_EDGE_PX = 150
 // Mean gap / mean edge at which straightness scores 0. Keeps that term on
 // a 0–1 scale beside the aspect score and the area rank.
 const STRAIGHTNESS_GAP_FRACTION = 0.06
-// Field failures: an 8-corner fit worse than 2 mm, the two cards disagreeing
-// by more than 5% of scale, jamb lines opening more than 3°, or a tap whose
-// local scale is 1.5× the reference centre (the card is off the measurement).
-const FIT_RMS_WARN_MM = 2
-const SCALE_DRIFT_WARN = 0.05
+// Field failures: an 8-corner fit worse than 3 mm (was 2; a ~300 px card
+// extrapolated across the doorway is noisy), jamb lines opening more than
+// 3°, or a tap whose local scale is 1.5× the reference centre.
+const FIT_RMS_WARN_MM = 3
+const SCALE_DRIFT_WARN_TIGHT = 0.05
+const SCALE_DRIFT_WARN_LOOSE = 0.15
+const SCALE_DRIFT_LOOSE_PX = 400
 const LINES_ANGLE_WARN_DEG = 3
 const SCALE_RATIO_WARN = 1.5
+const MARKER_RMS_WARN_MM = 1.5
+const PRINT_SCALE_AGREE = 0.01
+const PRINT_PAPER_BAND = 0.15
+const TEMPLATE_DETECT_MAX_SIDE = 1800
+const TEMPLATE_FLAT_WARNING = 'Template is not flat or is printed unevenly.'
 // 1-ref: taps this far off the sheet's edge direction are not a clean
 // perpendicular. The raw chord stays on screen so the tester can compare.
 const AXIS_ANGLE_WARN_DEG = 12
@@ -91,6 +98,7 @@ function customReference(longIn, shortIn) {
 function referenceToken(spec) {
   if (!spec || spec.name === 'card') return 'card'
   if (spec.name === 'letter') return 'letter'
+  if (spec.name === 'template') return 'template:letter-v1'
   const longIn = spec.longIn != null ? spec.longIn : spec.longMm / MM_PER_INCH
   const shortIn = spec.shortIn != null ? spec.shortIn : spec.shortMm / MM_PER_INCH
   const size = `${formatInchesToken(longIn)}x${formatInchesToken(shortIn)}`
@@ -98,6 +106,463 @@ function referenceToken(spec) {
     return `${spec.name}:${size}`
   }
   return `custom:${size}`
+}
+
+// Two ~300 px cards disagreeing at 5% is mostly extrapolation noise of a
+// single-card H across the gap. Loosen that gate when both long edges are
+// under 400 px; keep 5% once either reference is large enough to trust.
+function scaleDriftWarn(refAPx, refBPx) {
+  if (refAPx < SCALE_DRIFT_LOOSE_PX && refBPx < SCALE_DRIFT_LOOSE_PX) return SCALE_DRIFT_WARN_LOOSE
+  return SCALE_DRIFT_WARN_TIGHT
+}
+
+// Letter landscape, origin top-left, inches. Outer black of each marker is
+// 2.00 in. Shared by the printable page and the detector.
+const TEMPLATE_LETTER_V1 = {
+  ids: [0, 1, 2, 3],
+  markerSizeIn: 2.0,
+  outerSquaresIn: {
+    0: [0.60, 0.60, 2.60, 2.60],
+    1: [8.40, 0.60, 10.40, 2.60],
+    2: [8.40, 5.90, 10.40, 7.90],
+    3: [0.60, 5.90, 2.60, 7.90],
+  },
+  pageIn: [11, 8.5],
+  cardOutlineIn: [3.370, 2.125],
+  barIn: 6.0,
+}
+
+const TEMPLATE_OUTER_LONG_IN = 9.80
+const TEMPLATE_OUTER_SHORT_IN = 7.30
+
+function templatePrintScale(printScale) {
+  if (printScale > 0 && Number.isFinite(printScale)) return printScale
+  return 1
+}
+
+// s multiplies the nominal ink size. A 97% print has s = 0.97: the markers
+// are physically smaller, so an unscaled (s = 1) homography reads the world
+// 1/0.97 too large. Paper stock stays 11 × 8.5; only the ink shrinks.
+function templateReference(printScale) {
+  const s = templatePrintScale(printScale)
+  const longIn = TEMPLATE_OUTER_LONG_IN
+  const shortIn = TEMPLATE_OUTER_SHORT_IN
+  return {
+    name: 'template',
+    longMm: longIn * MM_PER_INCH * s,
+    shortMm: shortIn * MM_PER_INCH * s,
+    ratio: longIn / shortIn,
+    defaultLongPx: 400,
+    defaultShortPx: 400 * (shortIn / longIn),
+    longIn,
+    shortIn,
+    printScale: s,
+  }
+}
+
+function templateMarkerOuterCornersIn(id) {
+  const square = TEMPLATE_LETTER_V1.outerSquaresIn[id]
+  if (!square) return null
+  const x0 = square[0]
+  const y0 = square[1]
+  const x1 = square[2]
+  const y1 = square[3]
+  return [
+    {x: x0, y: y0},
+    {x: x1, y: y0},
+    {x: x1, y: y1},
+    {x: x0, y: y1},
+  ]
+}
+
+function templateMarkerOuterCornersMm(id, printScale) {
+  const inches = templateMarkerOuterCornersIn(id)
+  if (!inches) return null
+  const s = templatePrintScale(printScale) * MM_PER_INCH
+  const out = []
+  for (let i = 0; i < 4; i++) out.push({x: inches[i].x * s, y: inches[i].y * s})
+  return out
+}
+
+function templateOuterQuadMm(printScale) {
+  const s = templatePrintScale(printScale) * MM_PER_INCH
+  return [
+    {x: 0.60 * s, y: 0.60 * s},
+    {x: 10.40 * s, y: 0.60 * s},
+    {x: 10.40 * s, y: 7.90 * s},
+    {x: 0.60 * s, y: 7.90 * s},
+  ]
+}
+
+function templatePageCornersMm() {
+  return [
+    {x: 0, y: 0},
+    {x: LETTER_LONG_MM, y: 0},
+    {x: LETTER_LONG_MM, y: LETTER_SHORT_MM},
+    {x: 0, y: LETTER_SHORT_MM},
+  ]
+}
+
+function templateMarkerCentroidIn(id) {
+  const square = TEMPLATE_LETTER_V1.outerSquaresIn[id]
+  if (!square) return null
+  return {x: (square[0] + square[2]) / 2, y: (square[1] + square[3]) / 2}
+}
+
+// Which of TL,TR,BR,BL of that marker is the template's outer corner.
+function templateOuterCornerIndex(id) {
+  if (id === 1) return 1
+  if (id === 2) return 2
+  if (id === 3) return 3
+  return 0
+}
+
+function cyclicShiftPoints(pts, shift) {
+  const out = []
+  const n = pts.length
+  for (let i = 0; i < n; i++) out.push(pts[(i + shift) % n])
+  return out
+}
+
+function templateIdList(cornersById) {
+  const ids = []
+  for (let i = 0; i < TEMPLATE_LETTER_V1.ids.length; i++) {
+    const id = TEMPLATE_LETTER_V1.ids[i]
+    if (cornersById[id] && cornersById[id].length === 4) ids.push(id)
+  }
+  return ids
+}
+
+function homographyFromMarkerCorners(cornersById, printScale) {
+  const ids = templateIdList(cornersById)
+  const src = []
+  const dst = []
+  for (let i = 0; i < ids.length; i++) {
+    const img = cornersById[ids[i]]
+    const nom = templateMarkerOuterCornersMm(ids[i], printScale)
+    if (!nom) continue
+    for (let k = 0; k < 4; k++) {
+      src.push(img[k])
+      dst.push(nom[k])
+    }
+  }
+  if (src.length < 8) return null
+  const H = solveHomographyLeastSquares(src, dst)
+  if (!H) return null
+  const rms = metricReprojectionRms(H, src, dst)
+  return {H, src, dst, rms, ids}
+}
+
+function centroidBootstrapH(cornersById) {
+  const ids = templateIdList(cornersById)
+  const src = []
+  const dst = []
+  for (let i = 0; i < ids.length; i++) {
+    src.push(centroidOf(cornersById[ids[i]]))
+    const centre = templateMarkerCentroidIn(ids[i])
+    dst.push({x: centre.x * MM_PER_INCH, y: centre.y * MM_PER_INCH})
+  }
+  if (ids.length >= 4) return solveHomography(src, dst)
+  if (ids.length >= 3) return affineHomography(src, dst)
+  return umeyamaSimilarityH(src, dst)
+}
+
+function affineHomography(src, dst) {
+  if (!src || !dst || src.length < 3 || src.length !== dst.length) return null
+  const A = []
+  const b = []
+  for (let i = 0; i < src.length; i++) {
+    A.push([src[i].x, src[i].y, 1, 0, 0, 0])
+    b.push(dst[i].x)
+    A.push([0, 0, 0, src[i].x, src[i].y, 1])
+    b.push(dst[i].y)
+  }
+  const h = solveLinearSystem(A, b)
+  if (!h) return null
+  return [h[0], h[1], h[2], h[3], h[4], h[5], 0, 0, 1]
+}
+
+// 2D similarity (scale, rotation, translation). Used when only 2–3 marker
+// centroids are available, so a full 4-point homography is underdetermined.
+function umeyamaSimilarityH(src, dst) {
+  if (!src || !dst || src.length < 2 || src.length !== dst.length) return null
+  const n = src.length
+  let scx = 0
+  let scy = 0
+  let dcx = 0
+  let dcy = 0
+  for (let i = 0; i < n; i++) {
+    scx += src[i].x
+    scy += src[i].y
+    dcx += dst[i].x
+    dcy += dst[i].y
+  }
+  scx /= n
+  scy /= n
+  dcx /= n
+  dcy /= n
+  let dot = 0
+  let cross = 0
+  let varSrc = 0
+  for (let i = 0; i < n; i++) {
+    const sx = src[i].x - scx
+    const sy = src[i].y - scy
+    const dx = dst[i].x - dcx
+    const dy = dst[i].y - dcy
+    dot += sx * dx + sy * dy
+    cross += sx * dy - sy * dx
+    varSrc += sx * sx + sy * sy
+  }
+  if (!(varSrc > 1e-12)) return null
+  const scale = Math.hypot(dot, cross) / varSrc
+  const ang = Math.atan2(cross, dot)
+  const c = scale * Math.cos(ang)
+  const s = scale * Math.sin(ang)
+  const tx = dcx - (c * scx - s * scy)
+  const ty = dcy - (s * scx + c * scy)
+  return [c, -s, tx, s, c, ty, 0, 0, 1]
+}
+
+function assignMarkerCornersWithH(cornersById, H) {
+  if (!H) return null
+  const ids = templateIdList(cornersById)
+  const assignment = {}
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i]
+    const img = cornersById[id]
+    const nom = templateMarkerOuterCornersMm(id, 1)
+    const slots = [null, null, null, null]
+    const used = [false, false, false, false]
+    for (let c = 0; c < 4; c++) {
+      const mapped = applyHomography(H, img[c].x, img[c].y)
+      if (!mapped) return null
+      let best = -1
+      let bestD = Infinity
+      for (let k = 0; k < 4; k++) {
+        if (used[k]) continue
+        const dx = mapped.x - nom[k].x
+        const dy = mapped.y - nom[k].y
+        const dist = dx * dx + dy * dy
+        if (dist < bestD) {
+          bestD = dist
+          best = k
+        }
+      }
+      if (best < 0) return null
+      used[best] = true
+      slots[best] = copyPoint(img[c])
+    }
+    if (slots.some((p) => !p)) return null
+    assignment[id] = slots
+  }
+  return assignment
+}
+
+function markerCornerSequences(pts) {
+  const cw = orderCorners(pts)
+  const ccw = [cw[0], cw[3], cw[2], cw[1]]
+  const seq = []
+  for (let shift = 0; shift < 4; shift++) {
+    seq.push(cyclicShiftPoints(cw, shift))
+    seq.push(cyclicShiftPoints(ccw, shift))
+  }
+  return seq
+}
+
+function bruteAlignTemplateCorners(cornersById) {
+  const ids = templateIdList(cornersById)
+  const options = []
+  for (let i = 0; i < ids.length; i++) options.push(markerCornerSequences(cornersById[ids[i]]))
+  let best = null
+  const assignment = {}
+  function rec(k) {
+    if (best && best.markerRmsMm < 1e-6) return
+    if (k === ids.length) {
+      const fit = homographyFromMarkerCorners(assignment, 1)
+      if (!fit) return
+      if (!best || fit.rms < best.rms) {
+        const copy = {}
+        for (let i = 0; i < ids.length; i++) copy[ids[i]] = assignment[ids[i]]
+        best = {cornersById: copy, H: fit.H, markerRmsMm: fit.rms, ids: fit.ids}
+      }
+      return
+    }
+    const seqs = options[k]
+    for (let i = 0; i < seqs.length; i++) {
+      assignment[ids[k]] = seqs[i]
+      rec(k + 1)
+    }
+  }
+  rec(0)
+  return best
+}
+
+// js-aruco2 applies rotate2 internally so corners start at canonical TL when
+// the decode rotation is known, but that rotation is not a public field, and
+// image Y can flip the winding versus the page. Bootstrap a page-frame H from
+// marker centroids, assign each image corner to the nearest outer-square
+// corner (TL,TR,BR,BL), then iterate once on the full 8–16 point H. With
+// fewer than four markers the centroid H is underdetermined, so try windings.
+function alignTemplateMarkerCorners(cornersById) {
+  const ids = templateIdList(cornersById)
+  if (ids.length < 2) return null
+  const H0 = centroidBootstrapH(cornersById)
+  let fit = null
+  if (H0) {
+    const assignment = assignMarkerCornersWithH(cornersById, H0)
+    if (assignment) {
+      fit = homographyFromMarkerCorners(assignment, 1)
+      if (fit) {
+        const again = assignMarkerCornersWithH(cornersById, fit.H)
+        if (again) {
+          const refit = homographyFromMarkerCorners(again, 1)
+          if (refit && (fit.rms == null || refit.rms <= fit.rms)) fit = refit
+        }
+      }
+    }
+  }
+  if (fit && fit.rms != null && fit.rms < MARKER_RMS_WARN_MM) {
+    return {
+      cornersById: fit.src ? assignmentFromFit(fit, ids) : assignMarkerCornersWithH(cornersById, fit.H),
+      H: fit.H,
+      markerRmsMm: fit.rms,
+      ids: fit.ids,
+    }
+  }
+  const brute = bruteAlignTemplateCorners(cornersById)
+  if (brute && (!fit || brute.markerRmsMm < fit.rms)) return brute
+  if (!fit) return brute
+  const assigned = assignMarkerCornersWithH(cornersById, fit.H)
+  if (!assigned) return brute
+  return {
+    cornersById: assigned,
+    H: fit.H,
+    markerRmsMm: fit.rms,
+    ids: fit.ids,
+  }
+}
+
+function assignmentFromFit(fit, ids) {
+  const assignment = {}
+  let offset = 0
+  for (let i = 0; i < ids.length; i++) {
+    assignment[ids[i]] = fit.src.slice(offset, offset + 4)
+    offset += 4
+  }
+  return assignment
+}
+
+function templateQuadFromAlignedMarkers(aligned) {
+  if (!aligned || !aligned.H) return null
+  const outer = {}
+  const missing = []
+  for (let i = 0; i < TEMPLATE_LETTER_V1.ids.length; i++) {
+    const id = TEMPLATE_LETTER_V1.ids[i]
+    const cornerIndex = templateOuterCornerIndex(id)
+    if (aligned.cornersById[id]) {
+      outer[id] = copyPoint(aligned.cornersById[id][cornerIndex])
+    } else {
+      missing.push(id)
+    }
+  }
+  if (missing.length > 0) {
+    const inv = invertHomography(aligned.H)
+    if (!inv) return null
+    for (let i = 0; i < missing.length; i++) {
+      const id = missing[i]
+      const nom = templateMarkerOuterCornersMm(id, 1)
+      if (!nom) return null
+      const img = applyHomography(inv, nom[templateOuterCornerIndex(id)].x, nom[templateOuterCornerIndex(id)].y)
+      if (!img) return null
+      outer[id] = img
+    }
+  }
+  const quad = [outer[0], outer[1], outer[2], outer[3]]
+  if (quad.some((p) => !p)) return null
+  return {
+    cardCorners: quad,
+    synthesized: missing.length > 0,
+    markersFound: aligned.ids.length,
+    missingIds: missing,
+  }
+}
+
+function convexQuadContains(quad, p) {
+  if (!quad || quad.length !== 4 || !p) return false
+  const ordered = orderCorners(quad)
+  let sign = 0
+  for (let i = 0; i < 4; i++) {
+    const a = ordered[i]
+    const b = ordered[(i + 1) % 4]
+    const cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+    if (Math.abs(cross) < 1e-9) continue
+    const next = cross > 0 ? 1 : -1
+    if (sign === 0) sign = next
+    else if (next !== sign) return false
+  }
+  return true
+}
+
+function convexQuadContainsAll(quad, pts) {
+  if (!pts || pts.length === 0) return false
+  for (let i = 0; i < pts.length; i++) {
+    if (!convexQuadContains(quad, pts[i])) return false
+  }
+  return true
+}
+
+function paperMappedSizeMm(paperImageCorners, markerH) {
+  const mapped = mapPoints(markerH, paperImageCorners)
+  if (!mapped) return null
+  const ordered = orderCorners(mapped)
+  const pairA = (edgeLength(ordered[0], ordered[1]) + edgeLength(ordered[2], ordered[3])) / 2
+  const pairB = (edgeLength(ordered[1], ordered[2]) + edgeLength(ordered[3], ordered[0])) / 2
+  return {
+    longMm: Math.max(pairA, pairB),
+    shortMm: Math.min(pairA, pairB),
+  }
+}
+
+function paperSizePlausible(longMm, shortMm) {
+  if (!(longMm > 0) || !(shortMm > 0)) return false
+  const lo = 1 - PRINT_PAPER_BAND
+  const hi = 1 + PRINT_PAPER_BAND
+  return longMm >= LETTER_LONG_MM * lo && longMm <= LETTER_LONG_MM * hi
+    && shortMm >= LETTER_SHORT_MM * lo && shortMm <= LETTER_SHORT_MM * hi
+}
+
+// Paper stock is always Letter; ink is what the printer scaled. Mapped through
+// the unscaled-marker H, a 97% print makes the paper look 1/0.97 too large, so
+// s = 279.4 / measuredLong is 0.97 — the factor to apply to template dimensions.
+function recoverPrintScaleFromPaper(measuredLongMm, measuredShortMm) {
+  if (!(measuredLongMm > 0) || !(measuredShortMm > 0)) {
+    return {printScale: null, source: 'none', status: 'unverified'}
+  }
+  const sLong = LETTER_LONG_MM / measuredLongMm
+  const sShort = LETTER_SHORT_MM / measuredShortMm
+  const mean = (sLong + sShort) / 2
+  if (!(mean > 0)) return {printScale: null, source: 'none', status: 'unverified'}
+  const rel = Math.abs(sLong - sShort) / mean
+  if (rel > PRINT_SCALE_AGREE) {
+    return {printScale: null, source: 'none', status: 'unverified', sLong, sShort}
+  }
+  return {printScale: mean, source: 'paper', status: mean, sLong, sShort}
+}
+
+function recoverPrintScaleFromBar(measuredBarIn) {
+  if (!(measuredBarIn > 0) || !Number.isFinite(measuredBarIn)) {
+    return {printScale: null, source: 'none', status: 'unverified'}
+  }
+  const s = measuredBarIn / TEMPLATE_LETTER_V1.barIn
+  if (!(s > 0)) return {printScale: null, source: 'none', status: 'unverified'}
+  return {printScale: s, source: 'bar', status: s}
+}
+
+function choosePrintScale(barIn, paperLongMm, paperShortMm) {
+  const bar = recoverPrintScaleFromBar(barIn)
+  if (bar.source === 'bar' && Math.abs(barIn - TEMPLATE_LETTER_V1.barIn) > 1e-6) return bar
+  if (paperLongMm > 0 && paperShortMm > 0) return recoverPrintScaleFromPaper(paperLongMm, paperShortMm)
+  return {printScale: null, source: 'none', status: 'unverified'}
 }
 
 const FLOOR_LIVE_INSTRUCTION = 'Lay a plain sheet of printer paper on the floor on the line between the jambs, long edge along the door. Step back so both jambs and the sheet are in view, then Capture.'
@@ -1113,6 +1578,11 @@ if (typeof module !== 'undefined' && module.exports) {
     NOTEPAD_REF,
     A4_REF,
     MM_PER_INCH,
+    FIT_RMS_WARN_MM,
+    MARKER_RMS_WARN_MM,
+    TEMPLATE_LETTER_V1,
+    TEMPLATE_OUTER_LONG_IN,
+    TEMPLATE_OUTER_SHORT_IN,
     orderCorners,
     isoDestinationMm,
     referenceDestinationMm,
@@ -1120,6 +1590,7 @@ if (typeof module !== 'undefined' && module.exports) {
     solveHomography,
     solveHomographyLeastSquares,
     applyHomography,
+    invertHomography,
     planarDistanceMm,
     sheetAxisSeparationMm,
     perpendicularLinesDistanceMm,
@@ -1127,6 +1598,22 @@ if (typeof module !== 'undefined' && module.exports) {
     twoReferenceDestinationMm,
     customReference,
     referenceToken,
+    scaleDriftWarn,
+    templateReference,
+    templateMarkerOuterCornersIn,
+    templateMarkerOuterCornersMm,
+    templateOuterQuadMm,
+    templatePageCornersMm,
+    templateOuterCornerIndex,
+    alignTemplateMarkerCorners,
+    templateQuadFromAlignedMarkers,
+    convexQuadContains,
+    convexQuadContainsAll,
+    paperMappedSizeMm,
+    paperSizePlausible,
+    recoverPrintScaleFromPaper,
+    recoverPrintScaleFromBar,
+    choosePrintScale,
     homographyPixelsToMm,
     defaultQuadAt,
     quadAnglesOk,
@@ -1139,7 +1626,11 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 if (typeof document !== 'undefined') {
-  bootReferenceApp()
+  const bootIfStage = () => {
+    if (document.getElementById('stage')) bootReferenceApp()
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootIfStage)
+  else bootIfStage()
 }
 
 function bootReferenceApp() {
@@ -1154,6 +1645,11 @@ function bootReferenceApp() {
   let layout = 'one'
   let referenceKind = 'letter'
   let customRef = null
+  let templatePrintScaleValue = 1
+  let templatePrintSource = 'none'
+  let templatePrintStatus = 'unverified'
+  let templateBarIn = TEMPLATE_LETTER_V1.barIn
+  let templateMeta = null
   let cameraStream = null
   let cameraReady = false
   let cameraDenied = false
@@ -1215,6 +1711,7 @@ function bootReferenceApp() {
     els.customLongIn = document.getElementById('customLongIn')
     els.customShortIn = document.getElementById('customShortIn')
     els.customApplyButton = document.getElementById('customApplyButton')
+    els.templateBarIn = document.getElementById('templateBarIn')
     els.captureButton = document.getElementById('captureButton')
     els.resetPointsButton = document.getElementById('resetPointsButton')
     els.logButton = document.getElementById('logButton')
@@ -1273,6 +1770,7 @@ function bootReferenceApp() {
   }
 
   function currentReference() {
+    if (referenceKind === 'template') return templateReference(templatePrintScaleValue)
     if (referenceKind === 'letter') return LETTER_REF
     if (referenceKind === 'legal') return LEGAL_REF
     if (referenceKind === 'notepad') return NOTEPAD_REF
@@ -1285,6 +1783,7 @@ function bootReferenceApp() {
   function referenceNoun(capitalized) {
     let word = 'sheet'
     if (referenceKind === 'card') word = 'card'
+    else if (referenceKind === 'template') word = 'template'
     else if (referenceKind === 'custom') word = 'reference'
     if (!capitalized) return word
     return word.charAt(0).toUpperCase() + word.slice(1)
@@ -1293,6 +1792,7 @@ function bootReferenceApp() {
   function referenceChipLabel() {
     if (referenceKind === 'card') return 'Card'
     if (referenceKind === 'letter') return 'Letter'
+    if (referenceKind === 'template') return 'Template'
     if (referenceKind === 'legal') return 'Legal 11.75×8.5'
     if (referenceKind === 'notepad') return 'Notepad 11.5×8.5'
     if (referenceKind === 'a4') return 'A4 11.69×8.27'
@@ -1359,6 +1859,18 @@ function bootReferenceApp() {
 
   function liveInstruction() {
     const noun = referenceNoun(false)
+    if (referenceKind === 'template') {
+      if (twoRefLayout() && mode === 'wall') {
+        return 'Put one printed template flat on the wall with one edge on the floor line, and the other flat with one edge on the height mark. Any orientation. Both in view, then Capture.'
+      }
+      if (twoRefLayout()) {
+        return 'Put one printed template against each jamb, one edge flush on the jamb face. Any orientation. Both flat and in view, then Capture.'
+      }
+      if (mode === 'wall') {
+        return 'Hold the printed template flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
+      }
+      return 'Lay the printed Letter template on the floor on the line between the jambs (any orientation). Step back so both jambs and the sheet are in view, then Capture.'
+    }
     if (twoRefLayout() && mode === 'wall') {
       return `Put one ${noun} flat on the wall with one edge on the floor line, and the other flat with one edge on the height mark. Either orientation is fine. Both in view, then Capture.`
     }
@@ -1587,15 +2099,23 @@ function bootReferenceApp() {
       showCustomForm()
       return
     }
-    if (next !== 'card' && next !== 'letter' && next !== 'legal' && next !== 'notepad' && next !== 'a4') return
+    if (next !== 'card' && next !== 'letter' && next !== 'template' && next !== 'legal' && next !== 'notepad' && next !== 'a4') return
     hideCustomForm()
     hideReferencePicker()
     referenceKind = next
+    readTemplateBarField()
     updateReferenceChip()
     instructionHoldUntil = 0
     renderInstruction()
     drawMarks()
     logDiagnostic(`reference ${referenceToken(currentReference())}`)
+  }
+
+  function readTemplateBarField() {
+    if (!els.templateBarIn) return
+    const value = Number(String(els.templateBarIn.value).trim())
+    if (value > 0 && Number.isFinite(value) && value < 40) templateBarIn = value
+    else templateBarIn = TEMPLATE_LETTER_V1.barIn
   }
 
   function applyCustomReference() {
@@ -1932,7 +2452,36 @@ function bootReferenceApp() {
     if (reading.warningAngle) lines.push(FLUSH_WARNING)
     if (reading.warningAxis) lines.push(AXIS_MISALIGN_WARNING)
     if (reading.warningScale) lines.push(SCALE_WARNING)
+    if (reading.warningFlat) lines.push(TEMPLATE_FLAT_WARNING)
     return lines
+  }
+
+  function printScaleMeta() {
+    if (referenceKind !== 'template') return ''
+    if (templatePrintSource === 'none' || templatePrintStatus === 'unverified' || !(templatePrintScaleValue > 0)) {
+      return 'print unverified'
+    }
+    return `print ×${templatePrintScaleValue.toFixed(2)} (${templatePrintSource})`
+  }
+
+  function templateFields() {
+    if (referenceKind !== 'template') {
+      return {
+        printScale: null,
+        printScaleSource: 'none',
+        markersFound: null,
+        markerRmsMm: null,
+        warningFlat: false,
+      }
+    }
+    const rms = templateMeta && templateMeta.markerRmsMm
+    return {
+      printScale: templatePrintSource === 'none' ? 'unverified' : templatePrintScaleValue,
+      printScaleSource: templatePrintSource,
+      markersFound: templateMeta ? templateMeta.markersFound : null,
+      markerRmsMm: rms,
+      warningFlat: rms != null && rms > MARKER_RMS_WARN_MM,
+    }
   }
 
   function renderResult(reading) {
@@ -2007,6 +2556,9 @@ function bootReferenceApp() {
     const rawIn = inchesFromMm(sep.chordMm)
     const noun = referenceNoun(false)
     const angle = sep.axisAngleDeg
+    const extra = templateFields()
+    const printBit = printScaleMeta()
+    const printClause = printBit ? ` · ${printBit}` : ''
     const reading = baseReading({
       mm: sep.widthMm,
       inches,
@@ -2030,7 +2582,12 @@ function bootReferenceApp() {
       warningAngle: false,
       warningAxis: angle != null && angle > AXIS_ANGLE_WARN_DEG,
       warningScale: scaleUnreliable(scaleRatioA) || scaleUnreliable(scaleRatioB),
-      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · axis ${formatAngle(angle)} · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      printScale: extra.printScale,
+      printScaleSource: extra.printScaleSource,
+      markersFound: extra.markersFound,
+      markerRmsMm: extra.markerRmsMm,
+      warningFlat: extra.warningFlat,
+      meta: `⊥ width · raw ${rawIn.toFixed(1)} in · axis ${formatAngle(angle)} · ${noun} ${Math.round(cardLongPx)} px · scale ${formatRatio(scaleRatioA)}/${formatRatio(scaleRatioB)}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
   }
@@ -2044,7 +2601,11 @@ function bootReferenceApp() {
     const inches = inchesFromMm(measured.widthMm)
     const angle = measured.linesAngleDeg
     const drift = measured.scaleDrift
-    const disagree = measured.fitRmsMm > FIT_RMS_WARN_MM || Math.abs(drift - 1) > SCALE_DRIFT_WARN
+    const driftWarn = scaleDriftWarn(measured.refAPx, measured.refBPx)
+    const disagree = measured.fitRmsMm > FIT_RMS_WARN_MM || Math.abs(drift - 1) > driftWarn
+    const extra = templateFields()
+    const printBit = printScaleMeta()
+    const printClause = printBit ? ` · ${printBit}` : ''
     const reading = baseReading({
       mm: measured.widthMm,
       inches,
@@ -2068,7 +2629,12 @@ function bootReferenceApp() {
       warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
       warningAxis: false,
       warningScale: false,
-      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
+      printScale: extra.printScale,
+      printScaleSource: extra.printScaleSource,
+      markersFound: extra.markersFound,
+      markerRmsMm: extra.markerRmsMm,
+      warningFlat: extra.warningFlat,
+      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
     })
     showReading(reading)
     const smallA = measured.refAPx < SMALL_CARD_PX
@@ -2092,10 +2658,10 @@ function bootReferenceApp() {
     return false
   }
 
-  function clipRoi(tapX, tapY, imgW, imgH) {
+  function clipRoi(tapX, tapY, imgW, imgH, fraction) {
     const shortSide = Math.min(imgW, imgH)
     // 40% of the short side: wide enough to hold a foreshortened card or sheet.
-    let side = 0.40 * shortSide
+    let side = (fraction > 0 ? fraction : 0.40) * shortSide
     if (side < 32) side = Math.min(shortSide, 32)
     if (side > imgW) side = imgW
     if (side > imgH) side = imgH
@@ -2112,6 +2678,32 @@ function bootReferenceApp() {
     if (roiX + roiW > imgW) roiW = Math.max(1, imgW - roiX)
     if (roiY + roiH > imgH) roiH = Math.max(1, imgH - roiY)
     return {x: roiX, y: roiY, width: roiW, height: roiH}
+  }
+
+  function clipBoxAround(points, imgW, imgH, padFrac) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (let i = 0; i < points.length; i++) {
+      if (points[i].x < minX) minX = points[i].x
+      if (points[i].y < minY) minY = points[i].y
+      if (points[i].x > maxX) maxX = points[i].x
+      if (points[i].y > maxY) maxY = points[i].y
+    }
+    const padX = (maxX - minX) * (padFrac || 0.25) + 24
+    const padY = (maxY - minY) * (padFrac || 0.25) + 24
+    let x = Math.floor(minX - padX)
+    let y = Math.floor(minY - padY)
+    let w = Math.ceil(maxX - minX + 2 * padX)
+    let h = Math.ceil(maxY - minY + 2 * padY)
+    if (x < 0) x = 0
+    if (y < 0) y = 0
+    if (x + w > imgW) w = imgW - x
+    if (y + h > imgH) h = imgH - y
+    if (w < 32) w = Math.min(imgW, 32)
+    if (h < 32) h = Math.min(imgH, 32)
+    return {x, y, width: Math.max(1, w), height: Math.max(1, h)}
   }
 
   function readQuadPoints(approx) {
@@ -2248,17 +2840,20 @@ function bootReferenceApp() {
     return edgeStraightnessScore(gapSum / pts.length, edgeSum / 4)
   }
 
+  let quadSearch = null
+
   // Approx at 2%, then 3% and 4% when that is not a convex quad. Tap, angles,
   // and the wide ratio band are checked here; aspect is scored later.
   function candidateFromContour(contour, tapInRoi, roiArea, strategy, originX, originY) {
+    const search = quadSearch || {}
     const area = cv.contourArea(contour)
-    const minArea = 0.003 * roiArea
-    const maxArea = 0.60 * roiArea
+    const minArea = (search.minAreaFrac != null ? search.minAreaFrac : 0.003) * roiArea
+    const maxArea = (search.maxAreaFrac != null ? search.maxAreaFrac : 0.60) * roiArea
     if (!(area >= minArea && area <= maxArea)) return null
     const peri = cv.arcLength(contour, true)
     if (!(peri > 1)) return null
     const epsilons = [0.02, 0.03, 0.04]
-    const spec = currentReference()
+    const spec = search.spec || currentReference()
     for (let e = 0; e < epsilons.length; e++) {
       const approx = new cv.Mat()
       try {
@@ -2272,6 +2867,8 @@ function bootReferenceApp() {
         if (!ratioInAcceptBand(ratio, spec.ratio)) continue
         const imageQuad = []
         for (let i = 0; i < 4; i++) imageQuad.push(point(quad[i].x + originX, quad[i].y + originY))
+        if (search.mustContain && !convexQuadContainsAll(imageQuad, search.mustContain)) continue
+        if (search.accept && !search.accept(imageQuad)) continue
         return {
           quad: imageQuad,
           area,
@@ -2400,10 +2997,12 @@ function bootReferenceApp() {
     }
   }
 
-  function detectCard(tapX, tapY) {
+  function detectCard(tapX, tapY, options) {
     if (typeof cv === 'undefined' || !cv || typeof cv.imread !== 'function') {
       return {corners: null, strategy: null, tried: []}
     }
+    const search = options || {}
+    quadSearch = search
     const mats = []
     const track = (mat) => {
       mats.push(mat)
@@ -2413,7 +3012,7 @@ function bootReferenceApp() {
       const src = track(cv.imread(captureCanvas))
       const gray = track(new cv.Mat())
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
-      const box = clipRoi(tapX, tapY, src.cols, src.rows)
+      const box = search.roiBox || clipRoi(tapX, tapY, src.cols, src.rows, search.roiFraction)
       const grayRoi = track(gray.roi(new cv.Rect(box.x, box.y, box.width, box.height)))
       // Blur is shared by the edge and flood searches. If it throws, those
       // strategies still run on the raw ROI instead of aborting detection.
@@ -2462,7 +3061,7 @@ function bootReferenceApp() {
       for (let i = 0; i < candidates.length; i++) {
         if (candidates[i].area > maxArea) maxArea = candidates[i].area
       }
-      const spec = currentReference()
+      const spec = search.spec || currentReference()
       let best = candidates[0]
       let bestScore = -Infinity
       for (let i = 0; i < candidates.length; i++) {
@@ -2487,11 +3086,243 @@ function bootReferenceApp() {
       }
       return {corners: refined, strategy: best.strategy, tried}
     } finally {
+      quadSearch = null
       releaseAll(mats)
     }
   }
 
+  function arucoApi() {
+    if (window.JSARUCO && window.JSARUCO.AR) return window.JSARUCO.AR
+    if (typeof AR !== 'undefined') return AR
+    return null
+  }
+
+  function fullResCanny(mats, track) {
+    const src = track(cv.imread(captureCanvas))
+    const gray = track(new cv.Mat())
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
+    const blurred = track(new cv.Mat())
+    const canny = track(new cv.Mat())
+    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0)
+    cv.Canny(blurred, canny, 50, 150)
+    return canny
+  }
+
+  function detectPaperOutline(markerCentroids, markerH) {
+    if (!markerCentroids || markerCentroids.length < 2 || !markerH) return null
+    const seed = centroidOf(markerCentroids)
+    logDiagnostic(`paper: search at centroid (${Math.round(seed.x)}, ${Math.round(seed.y)})`)
+    let found = null
+    try {
+      found = detectCard(seed.x, seed.y, {
+        spec: LETTER_REF,
+        roiBox: clipBoxAround(markerCentroids, captureWidth, captureHeight, 0.35),
+        minAreaFrac: 0.02,
+        maxAreaFrac: 0.98,
+        mustContain: markerCentroids,
+        accept: (quad) => {
+          const size = paperMappedSizeMm(quad, markerH)
+          return !!(size && paperSizePlausible(size.longMm, size.shortMm))
+        },
+      })
+    } catch (err) {
+      logDiagnostic(`paper: search threw (${errorMessage(err)})`)
+      return null
+    }
+    if (!found || !found.corners) {
+      logDiagnostic('paper: no outline in 0.85–1.15 Letter band')
+      return null
+    }
+    const size = paperMappedSizeMm(found.corners, markerH)
+    if (!size) {
+      logDiagnostic('paper: mapped size failed')
+      return null
+    }
+    logDiagnostic(`paper: ${size.longMm.toFixed(1)} × ${size.shortMm.toFixed(1)} mm via ${found.strategy}`)
+    return size
+  }
+
+  function detectTemplate(tapX, tapY) {
+    logDiagnostic(`detectTemplate tap (${Math.round(tapX)}, ${Math.round(tapY)})`)
+    const api = arucoApi()
+    if (!api || typeof api.Detector !== 'function') {
+      logDiagnostic('markers: js-aruco2 AR.Detector missing')
+      return {ok: false, reason: 'no-detector'}
+    }
+    const srcW = captureWidth
+    const srcH = captureHeight
+    if (!(srcW > 8) || !(srcH > 8)) {
+      logDiagnostic('markers: capture is empty')
+      return {ok: false, reason: 'empty'}
+    }
+    const longSide = Math.max(srcW, srcH)
+    const scale = longSide > TEMPLATE_DETECT_MAX_SIDE ? TEMPLATE_DETECT_MAX_SIDE / longSide : 1
+    const dw = Math.max(1, Math.round(srcW * scale))
+    const dh = Math.max(1, Math.round(srcH * scale))
+    logDiagnostic(`markers: downscale ${srcW}×${srcH} → ${dw}×${dh}`)
+    let imageData = null
+    try {
+      const tiny = document.createElement('canvas')
+      tiny.width = dw
+      tiny.height = dh
+      const tctx = tiny.getContext('2d')
+      tctx.drawImage(captureCanvas, 0, 0, dw, dh)
+      imageData = tctx.getImageData(0, 0, dw, dh)
+    } catch (err) {
+      logDiagnostic(`markers: getImageData failed (${errorMessage(err)})`)
+      return {ok: false, reason: 'imagedata'}
+    }
+    let raw = []
+    try {
+      const detector = new api.Detector({dictionaryName: 'ARUCO_MIP_36h12'})
+      raw = detector.detect(imageData) || []
+    } catch (err) {
+      logDiagnostic(`markers: detect threw (${errorMessage(err)})`)
+      return {ok: false, reason: 'threw'}
+    }
+    const allowed = {}
+    for (let i = 0; i < TEMPLATE_LETTER_V1.ids.length; i++) allowed[TEMPLATE_LETTER_V1.ids[i]] = true
+    const kept = []
+    const rawIds = []
+    for (let i = 0; i < raw.length; i++) {
+      rawIds.push(raw[i].id)
+      if (allowed[raw[i].id] && raw[i].corners && raw[i].corners.length === 4) kept.push(raw[i])
+    }
+    const keptIds = kept.map((m) => m.id)
+    logDiagnostic(`markers: found ${kept.length} (ids ${keptIds.join(',') || 'none'}) of ${raw.length} raw (${rawIds.join(',') || 'none'})`)
+    if (kept.length < 2) return {ok: false, reason: 'too-few', keptIds}
+    const invScale = 1 / scale
+    const cornersById = {}
+    for (let i = 0; i < kept.length; i++) {
+      const pts = []
+      for (let c = 0; c < 4; c++) {
+        pts.push(point(kept[i].corners[c].x * invScale, kept[i].corners[c].y * invScale))
+      }
+      cornersById[kept[i].id] = pts
+    }
+    const mats = []
+    const track = (mat) => {
+      mats.push(mat)
+      return mat
+    }
+    try {
+      if (typeof cv !== 'undefined' && cv && typeof cv.imread === 'function') {
+        const canny = fullResCanny(mats, track)
+        const ids = Object.keys(cornersById).map(Number)
+        for (let i = 0; i < ids.length; i++) {
+          try {
+            cornersById[ids[i]] = refineCorners(canny, cornersById[ids[i]])
+            logDiagnostic(`markers: refined id ${ids[i]}`)
+          } catch (err) {
+            logDiagnostic(`markers: refine id ${ids[i]} failed (${errorMessage(err)})`)
+          }
+        }
+      } else {
+        logDiagnostic('markers: OpenCV missing, skip corner refine')
+      }
+    } catch (err) {
+      logDiagnostic(`markers: canny failed (${errorMessage(err)})`)
+    } finally {
+      releaseAll(mats)
+    }
+    const aligned = alignTemplateMarkerCorners(cornersById)
+    if (!aligned) {
+      logDiagnostic('markers: align failed')
+      return {ok: false, reason: 'align', keptIds}
+    }
+    logDiagnostic(`markers: aligned ${aligned.ids.length} rms ${aligned.markerRmsMm == null ? '—' : aligned.markerRmsMm.toFixed(2)} mm`)
+    const built = templateQuadFromAlignedMarkers(aligned)
+    if (!built) {
+      logDiagnostic('markers: outer quad failed')
+      return {ok: false, reason: 'quad', keptIds}
+    }
+    if (built.synthesized) {
+      logDiagnostic(`markers: synthesised outer corners for ids ${built.missingIds.join(',')}`)
+    }
+    const centroids = []
+    for (let i = 0; i < aligned.ids.length; i++) {
+      centroids.push(centroidOf(aligned.cornersById[aligned.ids[i]]))
+    }
+    const paper = detectPaperOutline(centroids, aligned.H)
+    readTemplateBarField()
+    const barOverride = Math.abs(templateBarIn - TEMPLATE_LETTER_V1.barIn) > 1e-6 ? templateBarIn : null
+    const chosen = choosePrintScale(
+      barOverride,
+      paper ? paper.longMm : null,
+      paper ? paper.shortMm : null
+    )
+    logDiagnostic(`print_scale ${chosen.status === 'unverified' ? 'unverified' : Number(chosen.printScale).toFixed(4)} source=${chosen.source}`)
+    return {
+      ok: true,
+      cardCorners: built.cardCorners,
+      markersFound: built.markersFound,
+      synthesized: built.synthesized,
+      markerRmsMm: aligned.markerRmsMm,
+      print: chosen,
+      keptIds,
+    }
+  }
+
+  function applyTemplateDetection(result) {
+    templateMeta = {
+      markersFound: result && result.markersFound,
+      markerRmsMm: result && result.markerRmsMm,
+    }
+    if (result && result.print && result.print.source === 'bar') {
+      templatePrintScaleValue = result.print.printScale
+      templatePrintSource = 'bar'
+      templatePrintStatus = result.print.printScale
+    } else if (result && result.print && result.print.source === 'paper') {
+      templatePrintScaleValue = result.print.printScale
+      templatePrintSource = 'paper'
+      templatePrintStatus = result.print.printScale
+    } else {
+      templatePrintScaleValue = 1
+      templatePrintSource = 'none'
+      templatePrintStatus = 'unverified'
+    }
+  }
+
   function placeCardAtTap(tapX, tapY) {
+    if (referenceKind === 'template') {
+      let found = null
+      try {
+        found = detectTemplate(tapX, tapY)
+      } catch (err) {
+        logDiagnostic(`detectTemplate threw: ${errorMessage(err)}`)
+        found = null
+      }
+      applyTemplateDetection(found && found.ok ? found : null)
+      if (found && found.ok && found.cardCorners && found.cardCorners.length === 4) {
+        cardCorners = found.cardCorners
+        originalCorners = found.cardCorners.map(copyPoint)
+        detectKind = 'auto'
+        detectStrategy = `markers${found.markersFound}`
+        const longPx = meanLongEdgePx(orderCorners(cardCorners))
+        logDiagnostic(`auto-detected template via ${detectStrategy}: long edge ${Math.round(longPx)} px`)
+        showTemporaryInstruction(
+          `${referenceNoun(true)} found — check the outer marker corners, then Confirm`,
+          DETECT_MESSAGE_HOLD_MS,
+          'ok'
+        )
+      } else {
+        cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight, currentReference())
+        originalCorners = cardCorners.map(copyPoint)
+        detectKind = 'manual'
+        detectStrategy = 'manual'
+        const reason = found && found.reason ? found.reason : 'none'
+        logDiagnostic(`auto-detect template failed (${reason})`)
+        showTemporaryInstruction(
+          'Template not found — drag the corners onto the outer marker corners',
+          DETECT_MESSAGE_HOLD_MS
+        )
+      }
+      phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
+      setPrimaryButton()
+      renderInstruction()
+      drawMarks()
+      return
+    }
     let found = null
     try {
       found = detectCard(tapX, tapY)
@@ -2719,6 +3550,20 @@ function bootReferenceApp() {
     els.stage.classList.remove('is-still')
   }
 
+  function resetTemplateScale() {
+    readTemplateBarField()
+    if (Math.abs(templateBarIn - TEMPLATE_LETTER_V1.barIn) > 1e-6) {
+      templatePrintScaleValue = templateBarIn / TEMPLATE_LETTER_V1.barIn
+      templatePrintSource = 'bar'
+      templatePrintStatus = templatePrintScaleValue
+    } else {
+      templatePrintScaleValue = 1
+      templatePrintSource = 'none'
+      templatePrintStatus = 'unverified'
+    }
+    templateMeta = null
+  }
+
   function clearCaptureGeometry() {
     cardCorners = null
     originalCorners = null
@@ -2734,6 +3579,7 @@ function bootReferenceApp() {
     cardLongPx = 0
     points = {a: null, b: null}
     currentReading = null
+    resetTemplateScale()
   }
 
   function captureFrame() {
@@ -2864,7 +3710,7 @@ function bootReferenceApp() {
       if (token === 'card') noun = 'card'
       else if (token.indexOf('custom:') === 0) noun = 'reference'
       const strategy = reading.detectStrategy || 'manual'
-      const warn = reading.warningDisagree || reading.warningAngle || reading.warningAxis || reading.warningScale ? ' · warn' : ''
+      const warn = reading.warningDisagree || reading.warningAngle || reading.warningAxis || reading.warningScale || reading.warningFlat ? ' · warn' : ''
       row.textContent = `${i + 1} · ${reading.mode} · ${reading.layout || '1ref'} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect} · ${strategy}${warn}`
       els.measurementRows.append(row)
     }
@@ -2902,6 +3748,10 @@ function bootReferenceApp() {
       'orient_a',
       'orient_b',
       'axis_angle_deg',
+      'print_scale',
+      'print_scale_source',
+      'markers_found',
+      'marker_rms_mm',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
       const reading = measurements[i]
@@ -2931,6 +3781,10 @@ function bootReferenceApp() {
         reading.orientA || 'none',
         reading.orientB || 'none',
         tsvNumber(reading.axisAngleDeg, 2),
+        reading.printScale === 'unverified' ? 'unverified' : tsvNumber(reading.printScale, 4),
+        reading.printScaleSource || 'none',
+        tsvNumber(reading.markersFound, 0),
+        tsvNumber(reading.markerRmsMm, 2),
       ].join('\t'))
     }
     return `${lines.join('\n')}\n`
@@ -3007,6 +3861,11 @@ function bootReferenceApp() {
       warningAngle: currentReading.warningAngle,
       warningAxis: currentReading.warningAxis,
       warningScale: currentReading.warningScale,
+      warningFlat: currentReading.warningFlat,
+      printScale: currentReading.printScale,
+      printScaleSource: currentReading.printScaleSource,
+      markersFound: currentReading.markersFound,
+      markerRmsMm: currentReading.markerRmsMm,
     })
     renderList()
     els.logButton.innerHTML = 'Saved'
@@ -3145,6 +4004,13 @@ function bootReferenceApp() {
         setReference(option.getAttribute('data-reference'))
       })
     }
+    if (els.templateBarIn) {
+      els.templateBarIn.addEventListener('change', () => {
+        readTemplateBarField()
+        resetTemplateScale()
+        logDiagnostic(`bar measured ${templateBarIn.toFixed(2)} in`)
+      })
+    }
     if (els.customApplyButton) els.customApplyButton.addEventListener('click', () => applyCustomReference())
     if (els.customLongIn) {
       els.customLongIn.addEventListener('keydown', (event) => {
@@ -3222,6 +4088,8 @@ function bootReferenceApp() {
     refreshButtonLabels()
     renderInstruction()
     logDiagnostic('reference.js loaded')
+    const ar = arucoApi()
+    logDiagnostic(ar && typeof ar.Detector === 'function' ? 'js-aruco2 ready' : 'js-aruco2 missing')
 
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       els.enableTiltButton.hidden = false

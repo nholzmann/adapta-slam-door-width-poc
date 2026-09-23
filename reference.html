@@ -552,7 +552,8 @@
       font-weight: 700;
     }
 
-    #customReferencePopover input {
+    #customReferencePopover input,
+    #templateBarIn {
       width: 5.4rem;
       min-height: 36px;
       padding: 0 0.4rem;
@@ -564,6 +565,15 @@
       user-select: text;
     }
 
+    .template-bar-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      margin: 0.35rem 0 0;
+      font-size: 0.68rem;
+      font-weight: 700;
+    }
+
     #customApplyButton {
       min-height: 36px;
       padding: 0 0.8rem;
@@ -573,6 +583,14 @@
       display: none !important;
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/dictionaries/aruco_mip_36h12.js"></script>
+  <script>
+    // js-aruco2 uses global CV; OpenCV.js uses cv. Snapshot first in case a
+    // build ever writes both onto the same name.
+    window.JSARUCO = {CV: window.CV, AR: window.AR}
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js" async></script>
   <script src="reference.js" defer></script>
 </head>
@@ -581,6 +599,7 @@
     <nav id="tabBar">
       <a href="index.html">SLAM</a>
       <a href="reference.html" aria-current="page">Reference</a>
+      <a href="template.html">Template</a>
     </nav>
     <div id="modeToggle" role="group" aria-label="Measurement mode">
       <button type="button" id="floorModeButton" aria-pressed="true" title="Floor (door width)">Floor</button>
@@ -608,6 +627,7 @@
 
   <div id="referencePickerPopover" hidden>
     <div role="listbox" aria-label="Reference size">
+      <button type="button" class="reference-option" data-reference="template" aria-pressed="false">Printed template (Letter) — best<span class="reference-recommended">best</span></button>
       <button type="button" class="reference-option" data-reference="card" aria-pressed="false">Credit card 3.370 × 2.125</button>
       <button type="button" class="reference-option" data-reference="letter" aria-pressed="true">Printer paper (Letter) 11 × 8.5<span class="reference-recommended">recommended</span></button>
       <button type="button" class="reference-option" data-reference="legal" aria-pressed="false">Legal pad 11.75 × 8.5</button>
@@ -615,7 +635,10 @@
       <button type="button" class="reference-option" data-reference="a4" aria-pressed="false">A4 11.69 × 8.27</button>
       <button type="button" class="reference-option" data-reference="custom" aria-pressed="false">Custom…</button>
     </div>
-    <p>Use plain printer paper: every Letter sheet is exactly 11 × 8.5. Notepads vary — pick the matching preset or measure the page.</p>
+    <label class="template-bar-field">Bar measured (in)
+      <input id="templateBarIn" type="text" inputmode="decimal" autocomplete="off" value="6.00">
+    </label>
+    <p>Printed template: print from the Template tab at 100 %. Check the card outline and the 6 in bar. A bar length other than 6.00 wins over the automatic paper-edge scale. Plain Letter stays the default until the template is proven.</p>
   </div>
 
   <div id="customReferencePopover" hidden>
@@ -664,7 +687,7 @@
         <summary id="diagnosticsSummary">Debug log (0)</summary>
         <div id="diagnosticsPanel"></div>
       </details>
-      <footer id="credits">Uses OpenCV.js (Apache-2.0). No 8th Wall engine is loaded on this page.</footer>
+      <footer id="credits">Uses OpenCV.js (Apache-2.0) and js-aruco2 (MIT). No 8th Wall engine is loaded on this page.</footer>
     </div>
   </div>
   <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
