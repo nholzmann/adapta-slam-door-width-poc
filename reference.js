@@ -1,9 +1,11 @@
-// Credit-card reference measurement: planar homography from an ID-1 card
-// to two taps, in millimetres. No SLAM. Pure geometry is at the top so
-// Node can require this file and check the math without a browser.
+// Still-image reference measurement: planar homography from a credit card
+// or a US Letter sheet to two taps, in millimetres. No SLAM. Pure geometry
+// is at the top so Node can require this file and check the math without a browser.
 
 const CARD_LONG_MM = 85.60
 const CARD_SHORT_MM = 53.98
+const LETTER_LONG_MM = 279.4
+const LETTER_SHORT_MM = 215.9
 const MM_PER_INCH = 25.4
 const HANDLE_HIT_PX = 28
 const LOUPE_SIZE_PX = 120
@@ -11,22 +13,39 @@ const LOUPE_OFFSET_Y = 90
 const LOUPE_MAGNIFY = 3
 const SMALL_CARD_PX = 120
 const MANUAL_DRAG_PX = 3
-const LEVEL_TOLERANCE_DEG = 4
 const DIAGNOSTIC_CAP = 60
 const FLASH_HOLD_MS = 1100
 const MESSAGE_HOLD_MS = 1700
-const DEFAULT_QUAD_W = 180
-const DEFAULT_QUAD_H = 113
+// Dashed live guide: long edge is this many capture-image pixels, drawn
+// through the same contain-fit as the preview so the box is a real size.
+const GUIDE_LONG_EDGE_PX = 150
 
-const LIVE_INSTRUCTION = 'Put the card flat on the floor in the middle of the doorway (Floor) or flat against the wall at the height you are measuring (Wall). Hold the phone parallel to that surface until the level badge is green, then Capture.'
-const TAP_CARD_INSTRUCTION = 'Tap the card'
-const ADJUST_CARD_INSTRUCTION = "Drag the corners onto the card's edges if needed, then tap Confirm card"
+// ratio is long/short. The detect band is ratio × 0.82 … ratio × 1.20.
+// defaultLongPx/defaultShortPx is the manual quad when auto-detect misses.
+const CARD_REF = {
+  name: 'card',
+  longMm: CARD_LONG_MM,
+  shortMm: CARD_SHORT_MM,
+  ratio: CARD_LONG_MM / CARD_SHORT_MM,
+  defaultLongPx: 180,
+  defaultShortPx: 113,
+}
+const LETTER_REF = {
+  name: 'letter',
+  longMm: LETTER_LONG_MM,
+  shortMm: LETTER_SHORT_MM,
+  ratio: LETTER_LONG_MM / LETTER_SHORT_MM,
+  defaultLongPx: 300,
+  defaultShortPx: 232,
+}
+
+const FLOOR_LIVE_INSTRUCTION = 'Lay the card (or sheet) on the floor between the jambs. Step back so both jambs and the card are in view, then Capture.'
+const WALL_LIVE_INSTRUCTION = 'Hold the card flat on the wall. Get the floor line and the height mark in view, then Capture.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
 const NEED_BOTH_INSTRUCTION = 'Place both points before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
-const NEED_CARD_INSTRUCTION = 'Confirm the card before placing points.'
 const MODE_LOCKED_INSTRUCTION = 'Mode can only be changed before Capture.'
-const HOMOGRAPHY_FAIL_INSTRUCTION = 'Those corners do not form a card. Drag them onto the four edges and confirm again.'
+const REFERENCE_LOCKED_INSTRUCTION = 'Reference can only be changed before Capture.'
 
 function point(x, y) {
   return {x, y}
@@ -81,25 +100,30 @@ function meanLongEdgePx(ordered) {
   return Math.max(pairA, pairB)
 }
 
-// Opposite-edge averages decide whether the card's long side is the
-// top/bottom pair (landscape ISO) or the left/right pair (portrait ISO).
-function isoDestinationMm(ordered) {
+// Opposite-edge averages decide whether the reference's long side is the
+// top/bottom pair or the left/right pair. ref is {longMm, shortMm, name}.
+function referenceDestinationMm(ordered, ref) {
+  const spec = ref || CARD_REF
   const pairA = (edgeLength(ordered[0], ordered[1]) + edgeLength(ordered[2], ordered[3])) / 2
   const pairB = (edgeLength(ordered[1], ordered[2]) + edgeLength(ordered[3], ordered[0])) / 2
   if (pairA >= pairB) {
     return [
       point(0, 0),
-      point(CARD_LONG_MM, 0),
-      point(CARD_LONG_MM, CARD_SHORT_MM),
-      point(0, CARD_SHORT_MM),
+      point(spec.longMm, 0),
+      point(spec.longMm, spec.shortMm),
+      point(0, spec.shortMm),
     ]
   }
   return [
     point(0, 0),
-    point(CARD_SHORT_MM, 0),
-    point(CARD_SHORT_MM, CARD_LONG_MM),
-    point(0, CARD_LONG_MM),
+    point(spec.shortMm, 0),
+    point(spec.shortMm, spec.longMm),
+    point(0, spec.longMm),
   ]
+}
+
+function isoDestinationMm(ordered) {
+  return referenceDestinationMm(ordered, CARD_REF)
 }
 
 function solveLinearSystem(matrix, rhs) {
@@ -181,10 +205,10 @@ function planarDistanceMm(H, a, b) {
   return Math.hypot(pa.x - pb.x, pa.y - pb.y)
 }
 
-function homographyPixelsToMm(pixelCorners) {
+function homographyPixelsToMm(pixelCorners, ref) {
   if (!pixelCorners || pixelCorners.length !== 4) return null
   const ordered = orderCorners(pixelCorners)
-  const dst = isoDestinationMm(ordered)
+  const dst = referenceDestinationMm(ordered, ref || CARD_REF)
   let H = null
   if (typeof cv !== 'undefined' && cv && typeof cv.getPerspectiveTransform === 'function') {
     try {
@@ -235,9 +259,11 @@ function inchesFromMm(mm) {
   return mm / MM_PER_INCH
 }
 
-function defaultQuadAt(tapX, tapY, imgW, imgH) {
-  const w = DEFAULT_QUAD_W
-  const h = DEFAULT_QUAD_H
+// Omitting ref keeps the card quad (180×113) so existing callers stay valid.
+function defaultQuadAt(tapX, tapY, imgW, imgH, ref) {
+  const spec = ref && ref.defaultLongPx ? ref : CARD_REF
+  const w = spec.defaultLongPx
+  const h = spec.defaultShortPx
   let cx = tapX
   let cy = tapY
   const halfW = w / 2
@@ -274,9 +300,14 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     CARD_LONG_MM,
     CARD_SHORT_MM,
+    LETTER_LONG_MM,
+    LETTER_SHORT_MM,
+    CARD_REF,
+    LETTER_REF,
     MM_PER_INCH,
     orderCorners,
     isoDestinationMm,
+    referenceDestinationMm,
     meanLongEdgePx,
     solveHomography,
     applyHomography,
@@ -299,6 +330,7 @@ function bootReferenceApp() {
 
   let phase = 'live'
   let mode = 'floor'
+  let referenceKind = 'card'
   let cameraStream = null
   let cameraReady = false
   let cameraDenied = false
@@ -310,7 +342,6 @@ function bootReferenceApp() {
   let captureHeight = 0
   let captureBeta = null
   let captureGamma = null
-  let captureWasLevel = false
   let cardCorners = null
   let originalCorners = null
   let detectKind = 'manual'
@@ -335,11 +366,12 @@ function bootReferenceApp() {
     els.instructionText = document.getElementById('instructionText')
     els.visionStatus = document.getElementById('visionStatus')
     els.cameraResolution = document.getElementById('cameraResolution')
-    els.levelAngles = document.getElementById('levelAngles')
-    els.levelBadge = document.getElementById('levelBadge')
-    els.enableLevelButton = document.getElementById('enableLevelButton')
+    els.tiltAngles = document.getElementById('tiltAngles')
+    els.enableTiltButton = document.getElementById('enableTiltButton')
     els.floorModeButton = document.getElementById('floorModeButton')
     els.wallModeButton = document.getElementById('wallModeButton')
+    els.cardReferenceButton = document.getElementById('cardReferenceButton')
+    els.letterReferenceButton = document.getElementById('letterReferenceButton')
     els.captureButton = document.getElementById('captureButton')
     els.resetPointsButton = document.getElementById('resetPointsButton')
     els.logButton = document.getElementById('logButton')
@@ -396,11 +428,15 @@ function bootReferenceApp() {
     }
   }
 
-  function isLevelNow() {
-    if (beta == null || gamma == null || !Number.isFinite(beta) || !Number.isFinite(gamma)) return false
-    if (Math.abs(gamma) > LEVEL_TOLERANCE_DEG) return false
-    if (mode === 'wall') return Math.abs(beta - 90) <= LEVEL_TOLERANCE_DEG
-    return Math.abs(beta) <= LEVEL_TOLERANCE_DEG
+  function currentReference() {
+    return referenceKind === 'letter' ? LETTER_REF : CARD_REF
+  }
+
+  // Spoken noun in prompts. The Letter reference is a sheet, not a card.
+  function referenceNoun(capitalized) {
+    const word = referenceKind === 'letter' ? 'sheet' : 'card'
+    if (!capitalized) return word
+    return word.charAt(0).toUpperCase() + word.slice(1)
   }
 
   function formatAngle(value) {
@@ -408,12 +444,20 @@ function bootReferenceApp() {
     return `${value.toFixed(1)}°`
   }
 
-  function renderLevel() {
-    if (!els.levelAngles || !els.levelBadge) return
-    els.levelAngles.textContent = `β ${formatAngle(beta)} · γ ${formatAngle(gamma)}`
-    const ok = isLevelNow()
-    els.levelBadge.textContent = ok ? 'level' : 'not level'
-    els.levelBadge.classList.toggle('is-level', ok)
+  function renderTilt() {
+    if (!els.tiltAngles) return
+    els.tiltAngles.textContent = `β ${formatAngle(beta)} · γ ${formatAngle(gamma)}`
+  }
+
+  function isLandscapeLayout() {
+    return window.matchMedia('(orientation: landscape)').matches
+  }
+
+  // Portrait keeps the two-line labels so four buttons fit one row.
+  // Landscape stacks them, so a single line is enough.
+  function stackedLabel(line1, line2) {
+    if (isLandscapeLayout()) return `${line1} ${line2}`
+    return `${line1}<br>${line2}`
   }
 
   function pointAInstruction() {
@@ -426,11 +470,29 @@ function bootReferenceApp() {
     return 'Tap point B (right jamb at the floor)'
   }
 
+  function tapReferenceInstruction() {
+    return `Tap the ${referenceNoun(false)}`
+  }
+
+  function adjustReferenceInstruction() {
+    const noun = referenceNoun(false)
+    return `Drag the corners onto the ${noun}'s edges if needed, then tap Confirm ${noun}`
+  }
+
+  function needReferenceInstruction() {
+    return `Confirm the ${referenceNoun(false)} before placing points.`
+  }
+
+  function homographyFailInstruction() {
+    const noun = referenceNoun(false)
+    return `Those corners do not form a ${noun}. Drag them onto the four edges and confirm again.`
+  }
+
   function instructionForState() {
     if (cameraDenied) return CAMERA_DENIED_INSTRUCTION
-    if (phase === 'live') return LIVE_INSTRUCTION
-    if (phase === 'need-card-tap') return TAP_CARD_INSTRUCTION
-    if (phase === 'adjust-card') return ADJUST_CARD_INSTRUCTION
+    if (phase === 'live') return mode === 'wall' ? WALL_LIVE_INSTRUCTION : FLOOR_LIVE_INSTRUCTION
+    if (phase === 'need-card-tap') return tapReferenceInstruction()
+    if (phase === 'adjust-card') return adjustReferenceInstruction()
     if (phase === 'point-a') return pointAInstruction()
     if (phase === 'point-b') return pointBInstruction()
     return 'Result is on screen. Save to list, or Retake / Reset points.'
@@ -442,12 +504,32 @@ function bootReferenceApp() {
     if (!el) return
     el.classList.remove('is-flashing')
     const next = instructionForState()
-    if (el.textContent !== next) el.textContent = next
+    if (el.textContent !== next) {
+      el.textContent = next
+      setInstructionExpanded(false)
+    }
+  }
+
+  function setInstructionExpanded(expanded) {
+    const el = els.instructionText
+    if (!el) return
+    const was = el.classList.contains('is-expanded')
+    el.classList.toggle('is-expanded', expanded)
+    el.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+    // The line's height changes the stage; refit the guide to the new box.
+    if (was !== expanded) resizeMarks()
+  }
+
+  function toggleInstructionExpanded() {
+    const el = els.instructionText
+    if (!el) return
+    setInstructionExpanded(!el.classList.contains('is-expanded'))
   }
 
   function showTemporaryInstruction(text, holdMs) {
     const el = els.instructionText
     el.textContent = text
+    setInstructionExpanded(false)
     el.classList.remove('is-flashing')
     void el.offsetWidth
     el.classList.add('is-flashing')
@@ -462,22 +544,37 @@ function bootReferenceApp() {
     mode = next
     els.floorModeButton.setAttribute('aria-pressed', mode === 'floor' ? 'true' : 'false')
     els.wallModeButton.setAttribute('aria-pressed', mode === 'wall' ? 'true' : 'false')
-    renderLevel()
+    instructionHoldUntil = 0
+    renderInstruction()
     logDiagnostic(`mode ${mode}`)
+  }
+
+  function setReference(next) {
+    if (phase !== 'live') {
+      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
+      return
+    }
+    referenceKind = next === 'letter' ? 'letter' : 'card'
+    els.cardReferenceButton.setAttribute('aria-pressed', referenceKind === 'card' ? 'true' : 'false')
+    els.letterReferenceButton.setAttribute('aria-pressed', referenceKind === 'letter' ? 'true' : 'false')
+    drawMarks()
+    logDiagnostic(`reference ${referenceKind}`)
   }
 
   function setPrimaryButton() {
     const button = els.captureButton
-    const modeLocked = phase !== 'live'
-    els.floorModeButton.disabled = modeLocked
-    els.wallModeButton.disabled = modeLocked
+    const locked = phase !== 'live'
+    els.floorModeButton.disabled = locked
+    els.wallModeButton.disabled = locked
+    if (els.cardReferenceButton) els.cardReferenceButton.disabled = locked
+    if (els.letterReferenceButton) els.letterReferenceButton.disabled = locked
     if (phase === 'live') {
       button.innerHTML = 'Capture'
       // Stay tappable while the camera starts so iOS can grant getUserMedia
       // from this tap. Vision still has to finish loading first.
       button.disabled = !visionReady
     } else if (phase === 'adjust-card') {
-      button.innerHTML = 'Confirm<br>card'
+      button.innerHTML = stackedLabel('Confirm', referenceNoun(false))
       button.disabled = false
     } else {
       button.innerHTML = 'Retake'
@@ -485,10 +582,21 @@ function bootReferenceApp() {
     }
   }
 
-  function fitMapping() {
+  function refreshButtonLabels() {
+    setPrimaryButton()
+    if (els.resetPointsButton && els.resetPointsButton.textContent !== 'Resetting') {
+      els.resetPointsButton.innerHTML = stackedLabel('Reset', 'points')
+    }
+    if (els.logButton && els.logButton.textContent !== 'Saved') {
+      els.logButton.innerHTML = stackedLabel('Save', 'to list')
+    }
+    if (els.copyResultsButton && els.copyResultsButton.textContent !== 'Copied') {
+      els.copyResultsButton.innerHTML = stackedLabel('Copy', 'results')
+    }
+  }
+
+  function fitMappingFor(mediaW, mediaH) {
     const box = els.stage.getBoundingClientRect()
-    const mediaW = captureWidth || (els.preview && els.preview.videoWidth) || 1
-    const mediaH = captureHeight || (els.preview && els.preview.videoHeight) || 1
     const scale = Math.min(box.width / mediaW, box.height / mediaH)
     const dispW = mediaW * scale
     const dispH = mediaH * scale
@@ -503,11 +611,17 @@ function bootReferenceApp() {
     }
   }
 
-  function imageToLocal(imageX, imageY) {
-    const fit = fitMapping()
+  function fitMapping() {
+    const mediaW = captureWidth || (els.preview && els.preview.videoWidth) || 1
+    const mediaH = captureHeight || (els.preview && els.preview.videoHeight) || 1
+    return fitMappingFor(mediaW, mediaH)
+  }
+
+  function imageToLocal(imageX, imageY, fit) {
+    const mapping = fit || fitMapping()
     return {
-      x: fit.offsetX + imageX * fit.scale,
-      y: fit.offsetY + imageY * fit.scale,
+      x: mapping.offsetX + imageX * mapping.scale,
+      y: mapping.offsetY + imageY * mapping.scale,
     }
   }
 
@@ -581,12 +695,69 @@ function bootReferenceApp() {
     ctx.stroke()
   }
 
+  function strokeOutlinedText(ctx, text, x, y) {
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.72)'
+    ctx.strokeText(text, x, y)
+    ctx.fillStyle = '#f4f1ea'
+    ctx.fillText(text, x, y)
+  }
+
+  // The box is 150 capture px on the reference's long edge, mapped with the
+  // preview's own video size so rotation still matches object-fit: contain.
+  function drawLiveGuide(ctx) {
+    const video = els.preview
+    const mediaW = video ? video.videoWidth : 0
+    const mediaH = video ? video.videoHeight : 0
+    if (!mediaW || !mediaH) return
+    const spec = currentReference()
+    const longPx = GUIDE_LONG_EDGE_PX
+    const shortPx = longPx * (spec.shortMm / spec.longMm)
+    const fit = fitMappingFor(mediaW, mediaH)
+    const cx = mediaW / 2
+    const cy = mediaH / 2
+    const halfLong = longPx / 2
+    const halfShort = shortPx / 2
+    const corners = [
+      imageToLocal(cx - halfLong, cy - halfShort, fit),
+      imageToLocal(cx + halfLong, cy - halfShort, fit),
+      imageToLocal(cx + halfLong, cy + halfShort, fit),
+      imageToLocal(cx - halfLong, cy + halfShort, fit),
+    ]
+    ctx.save()
+    ctx.setLineDash([8, 6])
+    ctx.beginPath()
+    ctx.moveTo(corners[0].x, corners[0].y)
+    for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y)
+    ctx.closePath()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#ffe14a'
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.font = '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'top'
+    const caption = `${referenceNoun(false)} at least this big`
+    const captionX = (corners[0].x + corners[1].x) / 2
+    let captionY = corners[2].y + 8
+    if (captionY > ctx.canvas.height - 22) captionY = corners[0].y + 8
+    strokeOutlinedText(ctx, caption, captionX, captionY)
+    if (window.innerHeight > window.innerWidth) {
+      ctx.textBaseline = 'bottom'
+      strokeOutlinedText(ctx, 'Turn sideways for a wider shot', ctx.canvas.width / 2, ctx.canvas.height - 10)
+    }
+    ctx.restore()
+  }
+
   function drawMarks() {
     const canvas = els.marks
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    if (phase === 'live') return
+    if (phase === 'live') {
+      drawLiveGuide(ctx)
+      return
+    }
 
     if (cardCorners && cardCorners.length === 4) {
       ctx.beginPath()
@@ -643,20 +814,21 @@ function bootReferenceApp() {
   function renderResult(reading) {
     els.resultInches.textContent = `${reading.inches.toFixed(1)} in`
     els.resultCentimeters.textContent = `(${reading.cm.toFixed(1)} cm)`
-    const levelFlag = reading.level ? 'y' : 'n'
-    els.resultMeta.textContent = `card ${Math.round(reading.cardLongPx)} px · ${reading.imageW}×${reading.imageH} · level ${levelFlag}`
+    const noun = reading.reference === 'letter' ? 'sheet' : 'card'
+    els.resultMeta.textContent = `${noun} ${Math.round(reading.cardLongPx)} px · ${reading.imageW}×${reading.imageH} · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)}`
   }
 
   function finishMeasurement() {
     if (!homography || !pointA || !pointB) return
     const mm = planarDistanceMm(homography, pointA, pointB)
     if (mm == null || !Number.isFinite(mm)) {
-      showTemporaryInstruction(HOMOGRAPHY_FAIL_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
     }
     const inches = inchesFromMm(mm)
     currentReading = {
       mode,
+      reference: referenceKind,
       mm,
       inches,
       cm: mm / 10,
@@ -665,7 +837,6 @@ function bootReferenceApp() {
       imageH: captureHeight,
       beta: captureBeta,
       gamma: captureGamma,
-      level: captureWasLevel,
       detect: detectIsManual() ? 'manual' : detectKind,
     }
     renderResult(currentReading)
@@ -833,7 +1004,10 @@ function bootReferenceApp() {
           const short = Math.min(rotated.size.width, rotated.size.height)
           const ratio = short > 1 ? long / short : 0
           const contains = cv.pointPolygonTest(approx, tapInRoi, false) >= 0
-          if (ratio >= 1.30 && ratio <= 1.90 && contains) keep = true
+          const spec = currentReference()
+          const minRatio = spec.ratio * 0.82
+          const maxRatio = spec.ratio * 1.20
+          if (ratio >= minRatio && ratio <= maxRatio && contains) keep = true
         }
         if (keep && area > bestArea) {
           bestArea = area
@@ -870,13 +1044,13 @@ function bootReferenceApp() {
       originalCorners = corners.map(copyPoint)
       detectKind = 'auto'
       const longPx = meanLongEdgePx(orderCorners(cardCorners))
-      logDiagnostic(`card auto-detected: long edge ${Math.round(longPx)} px`)
+      logDiagnostic(`${referenceNoun(false)} auto-detected: long edge ${Math.round(longPx)} px`)
     } else {
-      cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight)
+      cardCorners = defaultQuadAt(tapX, tapY, captureWidth, captureHeight, currentReference())
       originalCorners = cardCorners.map(copyPoint)
       detectKind = 'manual'
-      logDiagnostic('card auto-detect failed')
-      showTemporaryInstruction('Drag the corners onto the card\'s edges', MESSAGE_HOLD_MS)
+      logDiagnostic(`${referenceNoun(false)} auto-detect failed`)
+      showTemporaryInstruction(`Drag the corners onto the ${referenceNoun(false)}'s edges`, MESSAGE_HOLD_MS)
     }
     phase = 'adjust-card'
     setPrimaryButton()
@@ -886,24 +1060,24 @@ function bootReferenceApp() {
 
   function confirmCard() {
     if (!cardCorners || cardCorners.length !== 4) {
-      showTemporaryInstruction(TAP_CARD_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(tapReferenceInstruction(), MESSAGE_HOLD_MS)
       return
     }
-    const result = homographyPixelsToMm(cardCorners)
+    const result = homographyPixelsToMm(cardCorners, currentReference())
     if (!result || !result.H) {
-      showTemporaryInstruction(HOMOGRAPHY_FAIL_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
       return
     }
     homography = result.H
     cardCorners = result.ordered
     cardLongPx = result.cardLongPx
     if (detectIsManual()) detectKind = 'manual'
-    logDiagnostic(`card confirmed: long edge ${Math.round(cardLongPx)} px detect=${detectKind}`)
+    logDiagnostic(`${referenceNoun(false)} confirmed: long edge ${Math.round(cardLongPx)} px detect=${detectKind}`)
     phase = 'point-a'
     setPrimaryButton()
     if (cardLongPx < SMALL_CARD_PX) {
       showTemporaryInstruction(
-        `Card is small in the image (${Math.round(cardLongPx)} px). Retake closer for better accuracy.`,
+        `${referenceNoun(true)} is small in the image (${Math.round(cardLongPx)} px). Retake closer for better accuracy.`,
         MESSAGE_HOLD_MS
       )
     } else {
@@ -1022,7 +1196,6 @@ function bootReferenceApp() {
     els.still.getContext('2d').drawImage(captureCanvas, 0, 0)
     captureBeta = beta
     captureGamma = gamma
-    captureWasLevel = isLevelNow()
     cardCorners = null
     originalCorners = null
     homography = null
@@ -1038,7 +1211,7 @@ function bootReferenceApp() {
     instructionHoldUntil = 0
     renderInstruction()
     resizeMarks()
-    logDiagnostic(`capture ${width}×${height} level=${captureWasLevel ? 'y' : 'n'} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
+    logDiagnostic(`capture ${width}×${height} ref=${referenceKind} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
   }
 
   function retake() {
@@ -1071,7 +1244,7 @@ function bootReferenceApp() {
       return
     }
     if (!homography) {
-      showTemporaryInstruction(NEED_CARD_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(needReferenceInstruction(), MESSAGE_HOLD_MS)
       return
     }
     pointA = null
@@ -1118,8 +1291,8 @@ function bootReferenceApp() {
       const reading = measurements[i]
       const row = document.createElement('div')
       row.className = 'measurement-row'
-      const levelFlag = reading.level ? 'y' : 'n'
-      row.textContent = `${i + 1} · ${reading.mode} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · card ${Math.round(reading.cardLongPx)} px · level ${levelFlag} · ${reading.detect}`
+      const noun = reading.reference === 'letter' ? 'sheet' : 'card'
+      row.textContent = `${i + 1} · ${reading.mode} · ${reading.reference} ${reading.inches.toFixed(1)} in (${reading.cm.toFixed(1)} cm) · ${noun} ${Math.round(reading.cardLongPx)} px · tilt β ${formatAngle(reading.beta)} γ ${formatAngle(reading.gamma)} · ${reading.detect}`
       els.measurementRows.append(row)
     }
   }
@@ -1133,14 +1306,14 @@ function bootReferenceApp() {
     const lines = [[
       'n',
       'mode',
+      'reference',
       'inches',
       'cm',
       'card_long_px',
       'image_w',
       'image_h',
-      'beta',
-      'gamma',
-      'level',
+      'tilt_beta',
+      'tilt_gamma',
       'detect',
     ].join('\t')]
     for (let i = 0; i < measurements.length; i++) {
@@ -1148,6 +1321,7 @@ function bootReferenceApp() {
       lines.push([
         String(i + 1),
         reading.mode,
+        reading.reference || 'card',
         reading.inches.toFixed(1),
         reading.cm.toFixed(1),
         String(Math.round(reading.cardLongPx)),
@@ -1155,7 +1329,6 @@ function bootReferenceApp() {
         String(reading.imageH),
         tsvNumber(reading.beta, 1),
         tsvNumber(reading.gamma, 1),
-        reading.level ? 'y' : 'n',
         reading.detect,
       ].join('\t'))
     }
@@ -1166,7 +1339,7 @@ function bootReferenceApp() {
     els.copyResultsButton.innerHTML = 'Copied'
     clearTimeout(copyLabelTimer)
     copyLabelTimer = setTimeout(() => {
-      els.copyResultsButton.innerHTML = 'Copy<br>results'
+      els.copyResultsButton.innerHTML = stackedLabel('Copy', 'results')
     }, 1500)
   }
 
@@ -1206,6 +1379,7 @@ function bootReferenceApp() {
     }
     measurements.push({
       mode: currentReading.mode,
+      reference: currentReading.reference,
       inches: currentReading.inches,
       cm: currentReading.cm,
       cardLongPx: currentReading.cardLongPx,
@@ -1213,14 +1387,13 @@ function bootReferenceApp() {
       imageH: currentReading.imageH,
       beta: currentReading.beta,
       gamma: currentReading.gamma,
-      level: currentReading.level,
       detect: currentReading.detect,
     })
     renderList()
     els.logButton.innerHTML = 'Saved'
     clearTimeout(saveLabelTimer)
     saveLabelTimer = setTimeout(() => {
-      els.logButton.innerHTML = 'Save<br>to list'
+      els.logButton.innerHTML = stackedLabel('Save', 'to list')
     }, 1200)
     showTemporaryInstruction('Saved. Press Reset points or Retake for the next reading.', MESSAGE_HOLD_MS)
   }
@@ -1229,7 +1402,9 @@ function bootReferenceApp() {
     const width = els.preview.videoWidth
     const height = els.preview.videoHeight
     if (!width || !height) return
-    els.cameraResolution.textContent = `Camera: ${width}×${height}`
+    const label = `Camera: ${width}×${height}`
+    if (els.cameraResolution.textContent === label) return
+    els.cameraResolution.textContent = label
     logDiagnostic(`camera ${width}×${height}`)
   }
 
@@ -1318,26 +1493,34 @@ function bootReferenceApp() {
     window.addEventListener('deviceorientation', (event) => {
       beta = typeof event.beta === 'number' ? event.beta : null
       gamma = typeof event.gamma === 'number' ? event.gamma : null
-      renderLevel()
+      renderTilt()
     })
   }
 
-  function requestLevelPermission() {
+  function requestTiltPermission() {
     const request = DeviceOrientationEvent.requestPermission
     request.call(DeviceOrientationEvent).then((state) => {
-      logDiagnostic(`level permission ${state}`)
+      logDiagnostic(`tilt permission ${state}`)
       if (state === 'granted') {
-        els.enableLevelButton.hidden = true
+        els.enableTiltButton.hidden = true
         bindOrientation()
       }
     }).catch((err) => {
-      logDiagnostic(`level permission: ${errorMessage(err)}`)
+      logDiagnostic(`tilt permission: ${errorMessage(err)}`)
     })
   }
 
   function bindControls() {
     els.floorModeButton.addEventListener('click', () => setMode('floor'))
     els.wallModeButton.addEventListener('click', () => setMode('wall'))
+    els.cardReferenceButton.addEventListener('click', () => setReference('card'))
+    els.letterReferenceButton.addEventListener('click', () => setReference('letter'))
+    els.instructionText.addEventListener('click', () => toggleInstructionExpanded())
+    els.instructionText.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      toggleInstructionExpanded()
+    })
     els.captureButton.addEventListener('click', () => onPrimaryButton())
     els.resetPointsButton.addEventListener('click', () => resetPoints())
     els.logButton.addEventListener('click', () => saveReading())
@@ -1346,25 +1529,40 @@ function bootReferenceApp() {
     els.stage.addEventListener('pointermove', onStagePointerMove)
     els.stage.addEventListener('pointerup', onStagePointerUp)
     els.stage.addEventListener('pointercancel', onStagePointerUp)
-    els.preview.addEventListener('loadedmetadata', () => noteCameraSize())
-    window.addEventListener('resize', () => resizeMarks())
+    els.preview.addEventListener('loadedmetadata', () => {
+      noteCameraSize()
+      resizeMarks()
+    })
+    // videoWidth/videoHeight can swap after rotation; refit the contain mapping.
+    els.preview.addEventListener('resize', () => {
+      noteCameraSize()
+      resizeMarks()
+    })
+    window.addEventListener('resize', onViewportChange)
+    window.addEventListener('orientationchange', onViewportChange)
     window.addEventListener('pagehide', () => stopCamera())
-    if (els.enableLevelButton) {
-      els.enableLevelButton.addEventListener('click', () => requestLevelPermission())
+    if (els.enableTiltButton) {
+      els.enableTiltButton.addEventListener('click', () => requestTiltPermission())
     }
+  }
+
+  function onViewportChange() {
+    refreshButtonLabels()
+    resizeMarks()
+    requestAnimationFrame(() => resizeMarks())
   }
 
   function startApp() {
     cacheElements()
     bindControls()
     resizeMarks()
-    renderLevel()
-    setPrimaryButton()
+    renderTilt()
+    refreshButtonLabels()
     renderInstruction()
     logDiagnostic('reference.js loaded')
 
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-      els.enableLevelButton.hidden = false
+      els.enableTiltButton.hidden = false
     } else {
       bindOrientation()
     }

@@ -22,8 +22,8 @@
 
     #tabBar {
       display: flex;
-      flex: 0 0 44px;
-      height: 44px;
+      flex: 0 0 40px;
+      height: 40px;
       pointer-events: auto;
       background: rgba(8, 10, 12, 0.88);
       border-bottom: 1px solid rgba(255, 255, 255, 0.12);
@@ -46,27 +46,31 @@
       box-shadow: inset 0 -3px 0 #ffd27a;
     }
 
-    #modeToggle {
+    #modeToggle,
+    #referenceToggle {
       display: flex;
       flex: 0 0 auto;
       gap: 3px;
-      margin: 0.45rem 0.75rem 0;
+      margin: 0.28rem 0.5rem 0;
       padding: 3px;
       background: rgba(8, 10, 12, 0.62);
       border-radius: 999px;
     }
 
-    #modeToggle button {
+    #modeToggle button,
+    #referenceToggle button {
       flex: 1 1 0;
       min-width: 0;
-      min-height: 44px;
-      padding: 0 0.55rem;
+      min-height: 40px;
+      padding: 0 0.45rem;
       background: transparent;
       color: #efe6d4;
-      font-size: 0.82rem;
+      font-size: 0.78rem;
+      line-height: 1.15;
     }
 
-    #modeToggle button[aria-pressed="true"] {
+    #modeToggle button[aria-pressed="true"],
+    #referenceToggle button[aria-pressed="true"] {
       background: #f4f1ea;
       color: #1a1714;
     }
@@ -75,17 +79,17 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 0.35rem 0.75rem;
-      margin: 0.4rem 0.75rem 0;
-      padding: 0.45rem 0.7rem;
+      gap: 0.25rem 0.55rem;
+      margin: 0.28rem 0.5rem 0;
+      padding: 0.28rem 0.55rem;
       background: rgba(8, 10, 12, 0.72);
-      font-size: 0.85rem;
+      font-size: 0.78rem;
       font-variant-numeric: tabular-nums;
     }
 
     #visionStatus,
     #cameraResolution,
-    #levelReadout,
+    #tiltReadout,
     #instructionText,
     #measurementSummary,
     #diagnosticsSummary,
@@ -94,43 +98,44 @@
       margin: 0;
     }
 
-    #levelReadout {
+    #tiltReadout {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
+      gap: 0.35rem;
     }
 
-    .level-badge {
-      display: inline-block;
-      padding: 0.12rem 0.45rem;
-      border-radius: 999px;
-      background: rgba(255, 176, 32, 0.2);
-      color: #ffb020;
+    #tiltLabel {
+      font-size: 0.68rem;
       font-weight: 700;
-      font-size: 0.75rem;
-      letter-spacing: 0.02em;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
+      color: #c8c0b4;
     }
 
-    .level-badge.is-level {
-      background: rgba(61, 220, 110, 0.18);
-      color: #3ddc6e;
-    }
-
-    #enableLevelButton {
-      min-height: 36px;
-      padding: 0 0.75rem;
-      font-size: 0.8rem;
+    #enableTiltButton {
+      min-height: 32px;
+      padding: 0 0.65rem;
+      font-size: 0.75rem;
     }
 
     #instructionText {
-      margin: 0.45rem 0.75rem 0;
-      padding: 0.55rem 0.7rem;
+      margin: 0.28rem 0.5rem 0;
+      padding: 0.32rem 0.55rem;
       background: rgba(8, 10, 12, 0.62);
       border-radius: 8px;
-      font-size: 1.05rem;
+      font-size: 0.92rem;
       font-weight: 600;
-      line-height: 1.35;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+    }
+
+    #instructionText.is-expanded {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
     }
 
     #instructionText.is-flashing {
@@ -144,8 +149,8 @@
     #stage {
       position: relative;
       flex: 1 1 auto;
-      min-height: 10rem;
-      margin: 0.45rem 0.75rem 0;
+      min-height: 55vh;
+      margin: 0.28rem 0.5rem 0;
       overflow: hidden;
       background: #000;
       touch-action: none;
@@ -185,19 +190,40 @@
 
     #readout {
       flex: 0 1 auto;
-      max-height: 42vh;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0.3rem 0.5rem 0;
+      background: #0c0e10;
+    }
+
+    #resultPrimary,
+    #controls {
+      flex: 0 0 auto;
+    }
+
+    /* Details and credits shrink first so the stage and the buttons stay up. */
+    #belowFold {
+      flex: 0 1 auto;
+      min-height: 0;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
-      padding: 0.75rem 0.75rem 0.35rem;
-      background: linear-gradient(transparent, rgba(8, 10, 12, 0.78) 18%);
+    }
+
+    #resultPrimary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.1rem 0.45rem;
     }
 
     #resultInches {
       display: block;
-      font-size: clamp(3rem, 14vw, 4.4rem);
+      font-size: 1.45rem;
       font-weight: 700;
       letter-spacing: -0.03em;
-      line-height: 0.95;
+      line-height: 1.05;
       font-variant-numeric: tabular-nums;
     }
 
@@ -209,15 +235,13 @@
 
     #resultCentimeters {
       display: block;
-      margin-top: 0.2rem;
-      font-size: 1.2rem;
+      font-size: 0.95rem;
       font-variant-numeric: tabular-nums;
     }
 
     #resultMeta {
       display: block;
-      margin-top: 0.15rem;
-      font-size: 0.95rem;
+      font-size: 0.78rem;
       color: #efe6d4;
       font-variant-numeric: tabular-nums;
     }
@@ -225,8 +249,8 @@
     #controls {
       display: flex;
       flex-wrap: nowrap;
-      gap: 0.35rem;
-      margin-top: 0.75rem;
+      gap: 0.3rem;
+      margin-top: 0.3rem;
     }
 
     button {
@@ -235,9 +259,9 @@
       border-radius: 999px;
       background: #f4f1ea;
       color: #1a1714;
-      font: 600 0.9rem/1.1 inherit;
+      font: 600 0.82rem/1.1 inherit;
       padding: 0 0.4rem;
-      min-height: 52px;
+      min-height: 44px;
     }
 
     #controls button {
@@ -270,10 +294,10 @@
 
     #measurementList,
     #diagnosticsList {
-      margin-top: 0.5rem;
+      margin-top: 0.35rem;
       background: rgba(8, 10, 12, 0.55);
       border-radius: 8px;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       line-height: 1.35;
       user-select: text;
     }
@@ -298,12 +322,109 @@
     }
 
     #credits {
-      padding: 0.4rem 0.75rem 0.55rem;
-      background: rgba(8, 10, 12, 0.88);
+      padding: 0.35rem 0.15rem 0.45rem;
+      background: transparent;
       color: #e6e0d6;
       font-size: max(11px, 0.72rem);
       line-height: 1.35;
       user-select: text;
+    }
+
+    /* Landscape: stage fills the left; chrome stacks in a 200px column.
+       The video stays object-fit: contain; fitMapping() is reapplied on rotate. */
+    @media (orientation: landscape) {
+      body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 200px;
+        grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+        height: 100%;
+      }
+
+      #tabBar {
+        grid-column: 2;
+        grid-row: 1;
+        height: auto;
+        min-height: 36px;
+        flex: none;
+      }
+
+      #modeToggle {
+        grid-column: 2;
+        grid-row: 2;
+      }
+
+      #referenceToggle {
+        grid-column: 2;
+        grid-row: 3;
+      }
+
+      #statusStrip {
+        grid-column: 2;
+        grid-row: 4;
+      }
+
+      #instructionText {
+        grid-column: 2;
+        grid-row: 5;
+      }
+
+      #readout {
+        grid-column: 2;
+        grid-row: 6;
+        display: block;
+        overflow: auto;
+        margin: 0;
+      }
+
+      #stage {
+        grid-column: 1;
+        grid-row: 1 / -1;
+        margin: 0;
+        min-height: 0;
+        height: auto;
+      }
+
+      .clipboard-fallback {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      #modeToggle,
+      #referenceToggle,
+      #statusStrip,
+      #instructionText {
+        margin-left: 0.3rem;
+        margin-right: 0.3rem;
+      }
+
+      #modeToggle button,
+      #referenceToggle button {
+        min-height: 36px;
+        font-size: 0.68rem;
+        padding: 0 0.25rem;
+      }
+
+      #readout {
+        padding: 0.3rem 0.35rem 0.2rem;
+      }
+
+      #controls {
+        flex-direction: column;
+      }
+
+      #controls button {
+        flex: 0 0 auto;
+        min-height: 36px;
+        white-space: nowrap;
+      }
+
+      #resultInches {
+        font-size: 1.2rem;
+      }
+
+      #credits {
+        padding-bottom: 0.4rem;
+      }
     }
 
     /* The phone has no console we can read. Closed until the tester opens it. */
@@ -357,17 +478,22 @@
     <button type="button" id="wallModeButton" aria-pressed="false">Wall (height)</button>
   </div>
 
+  <div id="referenceToggle" role="group" aria-label="Scale reference">
+    <button type="button" id="cardReferenceButton" aria-pressed="true">Credit card</button>
+    <button type="button" id="letterReferenceButton" aria-pressed="false">Letter sheet</button>
+  </div>
+
   <div id="statusStrip">
     <p id="visionStatus">Loading vision library…</p>
     <p id="cameraResolution">Camera: —</p>
-    <p id="levelReadout">
-      <span id="levelAngles">β — · γ —</span>
-      <span id="levelBadge" class="level-badge">level</span>
+    <p id="tiltReadout">
+      <span id="tiltLabel">tilt</span>
+      <span id="tiltAngles">β — · γ —</span>
     </p>
-    <button type="button" id="enableLevelButton" hidden>Enable level</button>
+    <button type="button" id="enableTiltButton" hidden>Enable tilt</button>
   </div>
 
-  <p id="instructionText">Put the card flat on the floor in the middle of the doorway (Floor) or flat against the wall at the height you are measuring (Wall). Hold the phone parallel to that surface until the level badge is green, then Capture.</p>
+  <p id="instructionText" role="button" tabindex="0" aria-expanded="false">Lay the card (or sheet) on the floor between the jambs. Step back so both jambs and the card are in view, then Capture.</p>
 
   <div id="stage">
     <video id="preview" playsinline webkit-playsinline muted autoplay></video>
@@ -387,17 +513,18 @@
       <button type="button" id="logButton">Save<br>to list</button>
       <button type="button" id="copyResultsButton">Copy<br>results</button>
     </div>
-    <details id="measurementList">
-      <summary id="measurementSummary">Session list (0)</summary>
-      <div id="measurementRows"></div>
-    </details>
-    <details id="diagnosticsList">
-      <summary id="diagnosticsSummary">Debug log (0)</summary>
-      <div id="diagnosticsPanel"></div>
-    </details>
+    <div id="belowFold">
+      <details id="measurementList">
+        <summary id="measurementSummary">Session list (0)</summary>
+        <div id="measurementRows"></div>
+      </details>
+      <details id="diagnosticsList">
+        <summary id="diagnosticsSummary">Debug log (0)</summary>
+        <div id="diagnosticsPanel"></div>
+      </details>
+      <footer id="credits">Uses OpenCV.js (Apache-2.0). No 8th Wall engine is loaded on this page.</footer>
+    </div>
   </div>
-
-  <footer id="credits">Uses OpenCV.js (Apache-2.0). No 8th Wall engine is loaded on this page.</footer>
   <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
 </body>
 </html>
