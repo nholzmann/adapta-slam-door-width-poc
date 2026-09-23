@@ -489,7 +489,8 @@
       font-size: 16px;
     }
 
-    #customReferencePopover {
+    #customReferencePopover,
+    #referencePickerPopover {
       position: fixed;
       left: 8px;
       right: 8px;
@@ -500,12 +501,40 @@
       pointer-events: auto;
     }
 
-    #customReferencePopover p {
+    #customReferencePopover p,
+    #referencePickerPopover p {
       margin: 0.4rem 0 0;
       color: #e6e0d6;
       font-size: 0.68rem;
       font-weight: 500;
       line-height: 1.3;
+    }
+
+    .reference-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      margin: 0 0 0.28rem;
+      min-height: 40px;
+      padding: 0 0.7rem;
+      border-radius: 8px;
+      text-align: left;
+      font-size: 0.78rem;
+    }
+
+    .reference-option[aria-pressed="true"] {
+      outline: 2px solid #ffd27a;
+    }
+
+    .reference-recommended {
+      flex: 0 0 auto;
+      margin-left: 0.5rem;
+      color: #8a5a00;
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
     }
 
     .custom-fields {
@@ -562,9 +591,7 @@
       <button type="button" id="twoRefButton" aria-pressed="false" title="Two references">2 refs</button>
     </div>
     <div id="referenceToggle" role="group" aria-label="Scale reference">
-      <button type="button" id="cardReferenceButton" aria-pressed="true" title="Credit card">Card</button>
-      <button type="button" id="letterReferenceButton" aria-pressed="false" title="Letter sheet">Sheet</button>
-      <button type="button" id="customReferenceButton" aria-pressed="false" title="Custom size">Custom</button>
+      <button type="button" id="referencePickerButton" aria-pressed="true" aria-expanded="false" aria-controls="referencePickerPopover" title="Scale reference">Letter</button>
     </div>
     <button type="button" id="statusToggle" aria-expanded="false" aria-controls="statusStrip" aria-label="Show status">ⓘ</button>
   </header>
@@ -579,6 +606,18 @@
     <button type="button" id="enableTiltButton" hidden>Enable tilt</button>
   </div>
 
+  <div id="referencePickerPopover" hidden>
+    <div role="listbox" aria-label="Reference size">
+      <button type="button" class="reference-option" data-reference="card" aria-pressed="false">Credit card 3.370 × 2.125</button>
+      <button type="button" class="reference-option" data-reference="letter" aria-pressed="true">Printer paper (Letter) 11 × 8.5<span class="reference-recommended">recommended</span></button>
+      <button type="button" class="reference-option" data-reference="legal" aria-pressed="false">Legal pad 11.75 × 8.5</button>
+      <button type="button" class="reference-option" data-reference="notepad" aria-pressed="false">Notepad 11.5 × 8.5</button>
+      <button type="button" class="reference-option" data-reference="a4" aria-pressed="false">A4 11.69 × 8.27</button>
+      <button type="button" class="reference-option" data-reference="custom" aria-pressed="false">Custom…</button>
+    </div>
+    <p>Use plain printer paper: every Letter sheet is exactly 11 × 8.5. Notepads vary — pick the matching preset or measure the page.</p>
+  </div>
+
   <div id="customReferencePopover" hidden>
     <div class="custom-fields">
       <label>Long edge (in)
@@ -589,10 +628,10 @@
       </label>
       <button type="button" id="customApplyButton">Apply</button>
     </div>
-    <p>Letter 11 × 8.5, Legal pad 11.75 × 8.5, A4 11.69 × 8.27, Credit card 3.370 × 2.125.</p>
+    <p>Measure both edges of the page you are holding. The long edge is the longer side.</p>
   </div>
 
-  <p id="instructionText" role="button" tabindex="0" aria-expanded="false">Lay the card (or sheet) on the floor on the line between the jambs. Step back so both jambs and the card are in view, then Capture.</p>
+  <p id="instructionText" role="button" tabindex="0" aria-expanded="false">Lay a plain sheet of printer paper on the floor on the line between the jambs, long edge along the door. Step back so both jambs and the sheet are in view, then Capture.</p>
 
   <div id="stage">
     <video id="preview" playsinline webkit-playsinline muted autoplay></video>
