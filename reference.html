@@ -563,7 +563,8 @@
     }
 
     #customReferencePopover input,
-    #templateBarIn {
+    #templateBarIn,
+    #templateBarInRow {
       width: 5.4rem;
       min-height: 36px;
       padding: 0 0.4rem;
@@ -575,13 +576,45 @@
       user-select: text;
     }
 
+    .reference-template-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.35rem 0.6rem;
+      margin: 0 0 0.28rem;
+    }
+
+    .reference-template-row .reference-option {
+      flex: 1 1 12rem;
+      margin: 0;
+    }
+
+    .template-bar-inline-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 0.35rem 0.5rem;
+      flex: 1 1 10rem;
+    }
+
+    .template-bar-inline,
     .template-bar-field {
       display: flex;
       flex-direction: column;
       gap: 0.15rem;
-      margin: 0.35rem 0 0;
       font-size: 0.68rem;
       font-weight: 700;
+    }
+
+    .template-bar-field {
+      margin: 0.35rem 0 0;
+    }
+
+    .print-scale-current {
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: #d7c4a3;
+      padding-bottom: 0.45rem;
     }
 
     #customApplyButton {
@@ -637,7 +670,15 @@
 
   <div id="referencePickerPopover" hidden>
     <div role="listbox" aria-label="Reference size">
-      <button type="button" class="reference-option" data-reference="template" aria-pressed="false">Printed template (Letter)<span class="reference-hint">detected automatically when present</span></button>
+      <div class="reference-template-row">
+        <button type="button" class="reference-option" data-reference="template" aria-pressed="false">Printed template (Letter)<span class="reference-hint">detected automatically when present</span></button>
+        <div class="template-bar-inline-wrap">
+          <label class="template-bar-inline">Bar measured (in)
+            <input id="templateBarInRow" type="text" inputmode="decimal" autocomplete="off" value="6.00">
+          </label>
+          <span id="printScaleCurrent" class="print-scale-current" hidden></span>
+        </div>
+      </div>
       <button type="button" class="reference-option" data-reference="card" aria-pressed="false">Credit card 3.370 × 2.125</button>
       <button type="button" class="reference-option" data-reference="letter" aria-pressed="true">Printer paper (Letter) 11 × 8.5<span class="reference-recommended">recommended</span></button>
       <button type="button" class="reference-option" data-reference="legal" aria-pressed="false">Legal pad 11.75 × 8.5</button>
@@ -648,7 +689,7 @@
     <label class="template-bar-field">Bar measured (in)
       <input id="templateBarIn" type="text" inputmode="decimal" autocomplete="off" value="6.00">
     </label>
-    <p>Printed template: detected automatically when present. Print from the Template tab at 100 %. Check the card outline and the 6 in bar. A bar length other than 6.00 wins over the automatic paper-edge scale. Plain Letter stays the default until the template is proven.</p>
+    <p>Printed template: detected automatically when present. Print from the Template tab at 100 %. Check the card outline and the 6 in bar. Measure the bar once per printout — that value wins over the paper-edge scale and is remembered until you reload. On a white door the paper edge often cannot be found. Plain Letter stays the default until the template is proven.</p>
   </div>
 
   <div id="customReferencePopover" hidden>
