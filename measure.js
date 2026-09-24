@@ -1,9 +1,10 @@
-// Still-image reference measurement, in millimetres. No SLAM.
+// Still-image measurement, in millimetres. No SLAM.
 // One reference maps two jamb points through a homography; the width is the
 // component along the sheet's own axis. Two references sit on the jambs; the
 // width is the perpendicular gap between their outer edges, and each card may
 // lie with either edge across the doorway. Pure geometry is at the top so
-// Node can require this file without a browser.
+// Node can require this file without a browser. The guided UI lives in
+// bootReferenceApp(); two-ref and card math stay exported for the self-check.
 
 const CARD_LONG_MM = 85.60
 const CARD_SHORT_MM = 53.98
@@ -42,8 +43,8 @@ const PRINT_SCALE_REMEMBER_SHIFT = 0.015
 const PRINT_PAPER_BAND = 0.15
 const TEMPLATE_DETECT_MAX_SIDE = 1800
 const TEMPLATE_FLAT_WARNING = 'Template is not flat or is printed unevenly.'
-const PRINT_SCALE_UNVERIFIED_WARNING = 'Print scale unverified — home printers often shrink to ~97 %. Tape the 6 in bar on your printout and enter it under Reference › Bar measured, or photograph the sheet on a darker surface so the paper edge can be found.'
-const PRINT_SCALE_NUDGE = 'Measure the printed 6 in bar once and enter it — it corrects every reading.'
+const PRINT_SCALE_UNVERIFIED_WARNING = 'Print scale unverified — home printers often shrink to ~97 %. Tape the 6 in bar on your printout and enter it in step 1, or photograph the sheet on a darker surface so the paper edge can be found.'
+const PRINT_SCALE_NUDGE = 'Tape the printed 6 in line and enter its length in step 1 — it corrects every reading.'
 // 1-ref: taps this far off the sheet's edge direction are not a clean
 // perpendicular. The raw chord stays on screen so the tester can compare.
 const AXIS_ANGLE_WARN_DEG = 12
@@ -1910,11 +1911,16 @@ function bootReferenceApp() {
   const diagnosticLines = []
   const captureCanvas = document.createElement('canvas')
   const captureCtx = captureCanvas.getContext('2d')
+  const LINE_LENGTH_KEY = 'adapta.lineLengthIn'
+  const LINE_MIN_IN = 5.5
+  const LINE_MAX_IN = 6.5
+  const TAPE_FRACTION_GLYPHS = ['', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞']
 
+  let uiStep = 1
   let phase = 'live'
   let mode = 'floor'
   let layout = 'one'
-  let referenceKind = 'letter'
+  let referenceKind = 'template'
   let customRef = null
   let templatePrintScaleValue = 1
   let templatePrintSource = 'none'
@@ -1966,6 +1972,17 @@ function bootReferenceApp() {
   let saveLabelTimer = 0
   let loggingDiagnostic = false
   let orientationBound = false
+  let sheetHandlesVisible = false
+  let sheetFlashUntil = 0
+  let sheetFlashRaf = 0
+  let lineRemembered = false
+  let liveCheckTimer = 0
+  let liveCheckDelay = 300
+  let liveMarkerSeenAt = 0
+  let liveDetector = null
+  let liveCanvas = null
+  let menuOpen = false
+  let pointPopUntil = {a: 0, b: 0}
 
   function cacheElements() {
     els.stage = document.getElementById('stage')
@@ -1974,42 +1991,61 @@ function bootReferenceApp() {
     els.marks = document.getElementById('marks')
     els.instructionText = document.getElementById('instructionText')
     els.topBar = document.getElementById('topBar')
-    els.statusStrip = document.getElementById('statusStrip')
-    els.statusToggle = document.getElementById('statusToggle')
     els.readout = document.getElementById('readout')
-    els.sheetHandle = document.getElementById('sheetHandle')
-    els.sheetChevron = document.getElementById('sheetChevron')
-    els.belowFold = document.getElementById('belowFold')
     els.visionStatus = document.getElementById('visionStatus')
     els.cameraResolution = document.getElementById('cameraResolution')
     els.tiltAngles = document.getElementById('tiltAngles')
     els.enableTiltButton = document.getElementById('enableTiltButton')
     els.floorModeButton = document.getElementById('floorModeButton')
     els.wallModeButton = document.getElementById('wallModeButton')
-    els.oneRefButton = document.getElementById('oneRefButton')
-    els.twoRefButton = document.getElementById('twoRefButton')
-    els.referencePickerButton = document.getElementById('referencePickerButton')
-    els.referencePickerPopover = document.getElementById('referencePickerPopover')
-    els.customReferencePopover = document.getElementById('customReferencePopover')
-    els.customLongIn = document.getElementById('customLongIn')
-    els.customShortIn = document.getElementById('customShortIn')
-    els.customApplyButton = document.getElementById('customApplyButton')
-    els.templateBarIn = document.getElementById('templateBarIn')
-    els.templateBarInRow = document.getElementById('templateBarInRow')
-    els.printScaleCurrent = document.getElementById('printScaleCurrent')
-    els.captureButton = document.getElementById('captureButton')
-    els.resetPointsButton = document.getElementById('resetPointsButton')
-    els.logButton = document.getElementById('logButton')
+    els.lineLengthInput = document.getElementById('lineLengthInput')
+    els.templateBarIn = els.lineLengthInput
     els.copyResultsButton = document.getElementById('copyResultsButton')
     els.resultInches = document.getElementById('resultInches')
-    els.resultCentimeters = document.getElementById('resultCentimeters')
-    els.resultMeta = document.getElementById('resultMeta')
+    els.resultExact = document.getElementById('resultExact')
+    els.resultScale = document.getElementById('resultScale')
     els.resultWarning = document.getElementById('resultWarning')
+    els.resultWarningText = document.getElementById('resultWarningText')
     els.measurementSummary = document.getElementById('measurementSummary')
     els.measurementRows = document.getElementById('measurementRows')
     els.clipboardFallback = document.getElementById('clipboardFallback')
     els.diagnosticsPanel = document.getElementById('diagnosticsPanel')
     els.diagnosticsSummary = document.getElementById('diagnosticsSummary')
+    els.stepSheet = document.getElementById('stepSheet')
+    els.measureRoot = document.getElementById('measureRoot')
+    els.templateCard = document.getElementById('templateCard')
+    els.letterCard = document.getElementById('letterCard')
+    els.lineExactCheck = document.getElementById('lineExactCheck')
+    els.lineRememberedNote = document.getElementById('lineRememberedNote')
+    els.lineRangeMessage = document.getElementById('lineRangeMessage')
+    els.letterCheck = document.getElementById('letterCheck')
+    els.useLetterButton = document.getElementById('useLetterButton')
+    els.useTemplateButton = document.getElementById('useTemplateButton')
+    els.openCameraButton = document.getElementById('openCameraButton')
+    els.backButton = document.getElementById('backButton')
+    els.stepPill = document.getElementById('stepPill')
+    els.moreButton = document.getElementById('moreButton')
+    els.moreButtonStage = document.getElementById('moreButtonStage')
+    els.menuBadge = document.getElementById('menuBadge')
+    els.menuBadgeStage = document.getElementById('menuBadgeStage')
+    els.sheetStatus = document.getElementById('sheetStatus')
+    els.shutterButton = document.getElementById('shutterButton')
+    els.placeBlock = document.getElementById('placeBlock')
+    els.resultBlock = document.getElementById('resultBlock')
+    els.modeToggle = document.getElementById('modeToggle')
+    els.saveButton = document.getElementById('saveButton')
+    els.retakeButton = document.getElementById('retakeButton')
+    els.clearPointsButton = document.getElementById('clearPointsButton')
+    els.adjustSheetButton = document.getElementById('adjustSheetButton')
+    els.doneAdjustButton = document.getElementById('doneAdjustButton')
+    els.looksRightButton = document.getElementById('looksRightButton')
+    els.moreMenu = document.getElementById('moreMenu')
+    els.moreBackdrop = document.getElementById('moreBackdrop')
+    els.savedToggle = document.getElementById('savedToggle')
+    els.savedPanel = document.getElementById('savedPanel')
+    els.debugToggle = document.getElementById('debugToggle')
+    els.debugPanel = document.getElementById('debugPanel')
+    els.changeSheetButton = document.getElementById('changeSheetButton')
     renderDiagnostics()
     renderList()
   }
@@ -2054,41 +2090,331 @@ function bootReferenceApp() {
     }
   }
 
-  function currentReference() {
-    if (referenceKind === 'template') return templateReference(templatePrintScaleValue)
-    if (referenceKind === 'letter') return LETTER_REF
-    if (referenceKind === 'legal') return LEGAL_REF
-    if (referenceKind === 'notepad') return NOTEPAD_REF
-    if (referenceKind === 'a4') return A4_REF
-    if (referenceKind === 'custom' && customRef) return customRef
-    return CARD_REF
+  function formatTapeInches(inches) {
+    if (!Number.isFinite(inches)) return ''
+    const eighths = Math.round(inches * 8)
+    const whole = Math.floor(eighths / 8)
+    const frac = eighths % 8
+    if (frac === 0) return `${whole} in`
+    return `${whole} ${TAPE_FRACTION_GLYPHS[frac]} in`
   }
 
-  // Spoken noun in prompts. Paper presets are a sheet; only the card is a card.
-  // adjustNoun overrides the picker for the quad currently on screen: a
-  // detected template, or a template picker that fell back to plain Letter.
+  function readStoredLineLength() {
+    try {
+      const raw = window.localStorage.getItem(LINE_LENGTH_KEY)
+      const value = Number(raw)
+      if (value >= LINE_MIN_IN && value <= LINE_MAX_IN) return value
+    } catch (err) {
+      // Storage may throw in private mode.
+    }
+    return null
+  }
+
+  function persistLineLength() {
+    const value = Number(String(els.lineLengthInput && els.lineLengthInput.value).trim())
+    if (!(value >= LINE_MIN_IN && value <= LINE_MAX_IN)) return
+    try {
+      window.localStorage.setItem(LINE_LENGTH_KEY, String(value))
+    } catch (err) {
+      // Page must still work when storage throws.
+    }
+  }
+
+  function loadRememberedLineLength() {
+    const stored = readStoredLineLength()
+    if (stored == null || !els.lineLengthInput) return
+    els.lineLengthInput.value = stored.toFixed(2)
+    lineRemembered = true
+    if (els.lineRememberedNote) els.lineRememberedNote.removeAttribute('hidden')
+    if (Math.abs(stored - TEMPLATE_LETTER_V1.barIn) < 1e-6 && els.lineExactCheck) {
+      els.lineExactCheck.checked = true
+    }
+    readTemplateBarField(els.lineLengthInput)
+  }
+
+  function lineLengthInRange(value) {
+    return value >= LINE_MIN_IN && value <= LINE_MAX_IN
+  }
+
+  function lineLengthConfirmed() {
+    if (!els.lineLengthInput) return false
+    if (els.lineExactCheck && els.lineExactCheck.checked) return true
+    const value = Number(String(els.lineLengthInput.value).trim())
+    return lineLengthInRange(value)
+  }
+
+  function onLineLengthInput() {
+    if (!els.lineLengthInput) return
+    lineRemembered = false
+    if (els.lineRememberedNote) els.lineRememberedNote.setAttribute('hidden', '')
+    const raw = String(els.lineLengthInput.value).trim()
+    const value = Number(raw)
+    if (els.lineExactCheck && Math.abs(value - TEMPLATE_LETTER_V1.barIn) > 1e-6) {
+      els.lineExactCheck.checked = false
+    }
+    if (els.lineRangeMessage) {
+      if (raw !== '' && !lineLengthInRange(value)) els.lineRangeMessage.removeAttribute('hidden')
+      else els.lineRangeMessage.setAttribute('hidden', '')
+    }
+    readTemplateBarField(els.lineLengthInput)
+    updateOpenCameraEnabled()
+  }
+
+  function onExactCheck() {
+    if (!els.lineExactCheck || !els.lineLengthInput) return
+    if (els.lineExactCheck.checked) {
+      els.lineLengthInput.value = '6.00'
+      if (els.lineRangeMessage) els.lineRangeMessage.setAttribute('hidden', '')
+      readTemplateBarField(els.lineLengthInput)
+      persistLineLength()
+    }
+    updateOpenCameraEnabled()
+  }
+
+  function updateOpenCameraEnabled() {
+    if (!els.openCameraButton) return
+    let ok = false
+    if (referenceKind === 'letter') {
+      ok = !!(els.letterCheck && els.letterCheck.checked)
+    } else {
+      ok = lineLengthConfirmed()
+    }
+    els.openCameraButton.disabled = !ok
+  }
+
+  function setSheetKind(kind) {
+    referenceKind = kind === 'letter' ? 'letter' : 'template'
+    if (els.templateCard) {
+      if (referenceKind === 'template') els.templateCard.removeAttribute('hidden')
+      else els.templateCard.setAttribute('hidden', '')
+    }
+    if (els.letterCard) {
+      if (referenceKind === 'letter') els.letterCard.removeAttribute('hidden')
+      else els.letterCard.setAttribute('hidden', '')
+    }
+    if (els.useLetterButton) {
+      if (referenceKind === 'template') els.useLetterButton.removeAttribute('hidden')
+      else els.useLetterButton.setAttribute('hidden', '')
+    }
+    if (els.useTemplateButton) {
+      if (referenceKind === 'letter') els.useTemplateButton.removeAttribute('hidden')
+      else els.useTemplateButton.setAttribute('hidden', '')
+    }
+    instructionHoldUntil = 0
+    updateOpenCameraEnabled()
+    renderInstruction()
+    logDiagnostic(`reference ${referenceToken(currentReference())}`)
+  }
+
+  function openCameraFromStep1() {
+    if (els.openCameraButton && els.openCameraButton.disabled) return
+    if (referenceKind !== 'letter' && lineLengthConfirmed()) persistLineLength()
+    readTemplateBarField()
+    resetTemplateScale()
+    uiStep = 2
+    phase = 'live'
+    if (els.stepSheet) els.stepSheet.setAttribute('hidden', '')
+    if (els.measureRoot) els.measureRoot.removeAttribute('hidden')
+    syncChrome()
+    startCamera().then(() => {
+      startLiveCheck()
+      syncChrome()
+    })
+  }
+
+  function goToStep1() {
+    endDrag()
+    stopLiveCheck()
+    stopCamera()
+    clearCaptureGeometry()
+    clearResultText()
+    showLive()
+    sheetHandlesVisible = false
+    sheetFlashUntil = 0
+    uiStep = 1
+    phase = 'live'
+    cameraDenied = false
+    if (els.measureRoot) els.measureRoot.setAttribute('hidden', '')
+    if (els.stepSheet) els.stepSheet.removeAttribute('hidden')
+    setMenuOpen(false)
+    updateOpenCameraEnabled()
+    instructionHoldUntil = 0
+    renderInstruction()
+    syncChrome()
+  }
+
+  function beginAdjustSheet() {
+    if (!cardCorners) return
+    sheetHandlesVisible = true
+    phase = 'adjust-card'
+    instructionHoldUntil = 0
+    renderInstruction()
+    drawMarks()
+    syncChrome()
+  }
+
+  function setMenuOpen(open) {
+    menuOpen = !!open
+    if (els.moreMenu) {
+      if (menuOpen) els.moreMenu.removeAttribute('hidden')
+      else els.moreMenu.setAttribute('hidden', '')
+    }
+    if (els.moreBackdrop) {
+      if (menuOpen) els.moreBackdrop.removeAttribute('hidden')
+      else els.moreBackdrop.setAttribute('hidden', '')
+    }
+  }
+
+  function toggleMenuPanel(which) {
+    const panel = which === 'saved' ? els.savedPanel : els.debugPanel
+    if (!panel) return
+    const open = panel.hasAttribute('hidden')
+    if (els.savedPanel) els.savedPanel.setAttribute('hidden', '')
+    if (els.debugPanel) els.debugPanel.setAttribute('hidden', '')
+    if (open) panel.removeAttribute('hidden')
+  }
+
+  function updateMenuBadge() {
+    const label = measurements.length ? String(measurements.length) : ''
+    if (els.menuBadge) els.menuBadge.textContent = label
+    if (els.menuBadgeStage) els.menuBadgeStage.textContent = label
+  }
+
+  function updateStepPill() {
+    if (!els.stepPill) return
+    if (uiStep === 2) {
+      els.stepPill.textContent = 'Step 2 of 3 · Place the sheet'
+      return
+    }
+    if (uiStep !== 3) return
+    let detail = 'Mark the two sides'
+    if (phase === 'need-card-tap') {
+      detail = referenceKind === 'letter' ? 'Tap the paper' : 'Find the sheet'
+    } else if (phase === 'adjust-card' || phase === 'adjust-card-b') {
+      detail = sheetHandlesVisible ? 'Adjust the sheet' : 'Mark the two sides'
+    } else if (phase === 'point-a') detail = pointInstruction('a')
+    else if (phase === 'point-b') detail = pointInstruction('b')
+    else if (phase === 'result') detail = 'Your measurement'
+    els.stepPill.textContent = `Step 3 of 3 · ${detail}`
+  }
+
+  function setHidden(el, hidden) {
+    if (!el) return
+    if (hidden) el.setAttribute('hidden', '')
+    else el.removeAttribute('hidden')
+  }
+
+  function syncChrome() {
+    document.body.classList.toggle('is-step-1', uiStep === 1)
+    document.body.classList.toggle('is-step-2', uiStep === 2)
+    document.body.classList.toggle('is-step-3', uiStep === 3)
+    const onPhoto = uiStep > 1
+    setHidden(els.stepSheet, onPhoto)
+    setHidden(els.measureRoot, !onPhoto)
+    setHidden(els.backButton, uiStep !== 2)
+    setHidden(els.shutterButton, uiStep !== 2)
+    setHidden(els.sheetStatus, uiStep !== 2 || referenceKind !== 'template')
+    setHidden(els.placeBlock, uiStep === 3 && !!currentReading)
+    setHidden(els.modeToggle, uiStep !== 2)
+    setHidden(els.resultBlock, !(uiStep === 3 && currentReading))
+    const adjusting = uiStep === 3 && sheetHandlesVisible
+      && (phase === 'adjust-card' || phase === 'adjust-card-b')
+    const canAdjust = uiStep === 3 && cardCorners && !sheetHandlesVisible
+      && (phase === 'point-a' || phase === 'point-b' || phase === 'result')
+    const letterAdjust = adjusting && !pendingUsesTemplate
+    setHidden(els.looksRightButton, !letterAdjust)
+    setHidden(els.doneAdjustButton, !(adjusting && !letterAdjust))
+    setHidden(els.saveButton, !(uiStep === 3 && currentReading))
+    setHidden(els.retakeButton, uiStep !== 3)
+    setHidden(els.adjustSheetButton, !canAdjust)
+    setHidden(els.clearPointsButton, !(uiStep === 3 && (points.a || points.b)))
+    if (els.instructionText) {
+      const showInstruction = uiStep === 2 || (uiStep === 3 && !currentReading)
+      setHidden(els.instructionText, !showInstruction)
+    }
+    updateStepPill()
+    updateMenuBadge()
+  }
+
+  function startLiveCheck() {
+    stopLiveCheck()
+    if (uiStep !== 2 || referenceKind !== 'template') return
+    liveCheckDelay = 300
+    liveMarkerSeenAt = 0
+    liveTick()
+  }
+
+  function stopLiveCheck() {
+    if (liveCheckTimer) {
+      clearTimeout(liveCheckTimer)
+      liveCheckTimer = 0
+    }
+  }
+
+  function liveTick() {
+    liveCheckTimer = 0
+    if (uiStep !== 2 || document.hidden || referenceKind !== 'template') return
+    const started = performance.now()
+    const found = runLiveSheetDetect()
+    const elapsed = performance.now() - started
+    if (found) liveMarkerSeenAt = performance.now()
+    const recent = liveMarkerSeenAt > 0 && (performance.now() - liveMarkerSeenAt) < 1000
+    if (els.sheetStatus) {
+      els.sheetStatus.removeAttribute('hidden')
+      els.sheetStatus.textContent = recent ? 'Sheet found' : 'Looking for the sheet…'
+      els.sheetStatus.classList.toggle('is-found', recent)
+    }
+    if (elapsed > 120) liveCheckDelay = 1000
+    else liveCheckDelay = 300
+    liveCheckTimer = setTimeout(liveTick, liveCheckDelay)
+  }
+
+  function runLiveSheetDetect() {
+    const video = els.preview
+    const api = arucoApi()
+    if (!video || !video.videoWidth || !api || typeof api.Detector !== 'function') return false
+    const srcW = video.videoWidth
+    const srcH = video.videoHeight
+    const longSide = Math.max(srcW, srcH)
+    const scale = longSide > 640 ? 640 / longSide : 1
+    const dw = Math.max(1, Math.round(srcW * scale))
+    const dh = Math.max(1, Math.round(srcH * scale))
+    try {
+      if (!liveCanvas) liveCanvas = document.createElement('canvas')
+      liveCanvas.width = dw
+      liveCanvas.height = dh
+      const ctx = liveCanvas.getContext('2d')
+      ctx.drawImage(video, 0, 0, dw, dh)
+      const imageData = ctx.getImageData(0, 0, dw, dh)
+      if (!liveDetector) liveDetector = new api.Detector({dictionaryName: 'ARUCO_MIP_36h12'})
+      const raw = liveDetector.detect(imageData) || []
+      const allowed = {0: true, 1: true, 2: true, 3: true}
+      let count = 0
+      for (let i = 0; i < raw.length; i++) {
+        if (allowed[raw[i].id]) count += 1
+      }
+      return count >= 2
+    } catch (err) {
+      return false
+    }
+  }
+
+  function currentReference() {
+    if (referenceKind === 'letter') return LETTER_REF
+    return templateReference(templatePrintScaleValue)
+  }
+
+  // Spoken noun in prompts. The printed sheet vs plain paper.
   function referenceNoun(capitalized) {
     let word = 'sheet'
-    if (adjustNoun === 'template') word = 'template'
-    else if (adjustNoun === 'sheet') word = 'sheet'
-    else if (referenceKind === 'card') word = 'card'
-    else if (referenceKind === 'template') word = 'template'
-    else if (referenceKind === 'custom') word = 'reference'
+    if (adjustNoun === 'sheet' || referenceKind === 'letter') word = 'paper'
+    else if (referenceKind === 'template' || adjustNoun === 'template') word = 'sheet'
     if (!capitalized) return word
     return word.charAt(0).toUpperCase() + word.slice(1)
   }
 
   function referenceChipLabel() {
-    if (referenceKind === 'card') return 'Card'
-    if (referenceKind === 'letter') return 'Letter'
-    if (referenceKind === 'template') return 'Template'
-    if (referenceKind === 'legal') return 'Legal 11.75×8.5'
-    if (referenceKind === 'notepad') return 'Notepad 11.5×8.5'
-    if (referenceKind === 'a4') return 'A4 11.69×8.27'
-    if (referenceKind === 'custom' && customRef) {
-      return `Custom ${formatInchesToken(customRef.longIn)}×${formatInchesToken(customRef.shortIn)}`
-    }
-    return 'Reference'
+    return referenceKind === 'letter' ? 'Letter' : 'Template'
   }
 
   function twoRefLayout() {
@@ -2110,69 +2436,47 @@ function bootReferenceApp() {
     return `${line1}<br>${line2}`
   }
 
+  function sheetWord() {
+    return referenceKind === 'letter' ? 'paper' : 'sheet'
+  }
+
   function pointInstruction(key) {
     if (mode === 'wall') {
-      if (key === 'a') return 'Press on the floor line. Slide the crosshair, then lift'
-      return 'Press on the height mark. Slide the crosshair, then lift'
+      if (key === 'a') return 'Tap the floor at the wall'
+      return 'Now tap the height mark'
     }
-    if (key === 'a') return 'Press on the LEFT jamb where it meets the floor. Slide the crosshair, then lift'
-    return 'Press on the RIGHT jamb where it meets the floor. Slide the crosshair, then lift'
+    if (key === 'a') return 'Tap where the left jamb meets the floor'
+    return 'Now tap where the right jamb meets the floor'
   }
 
   function tapReferenceInstruction(which) {
-    const noun = referenceNoun(false)
-    if (which === 'b') {
-      if (mode === 'wall') return `Tap the UPPER ${noun}`
-      return `Tap the RIGHT ${noun}`
+    if (referenceKind === 'template' && which !== 'b') {
+      return 'Couldn\'t find the sheet. Tap it, or retake the photo with all four corner squares in view.'
     }
-    if (twoRefLayout()) {
-      if (mode === 'wall') return `Tap the LOWER ${noun}`
-      return `Tap the LEFT ${noun}`
-    }
-    return `Tap the ${noun}`
+    return `Tap the ${sheetWord()}`
   }
 
   function adjustReferenceInstruction() {
-    const noun = referenceNoun(false)
-    return `Drag the corners onto the ${noun}'s edges if needed, then tap Confirm ${noun}`
+    return `Drag the corners onto the ${sheetWord()}'s edges if needed, then tap Looks right`
   }
 
   function needReferenceInstruction() {
-    return `Confirm the ${referenceNoun(false)} before placing points.`
+    return `Confirm the ${sheetWord()} before placing points.`
   }
 
   function homographyFailInstruction() {
-    const noun = referenceNoun(false)
-    return `Those corners do not form a ${noun}. Drag them onto the four edges and confirm again.`
+    return `Those corners do not form a ${sheetWord()}. Drag them onto the four edges and confirm again.`
   }
 
   function liveInstruction() {
-    const noun = referenceNoun(false)
-    if (referenceKind === 'template') {
-      if (twoRefLayout() && mode === 'wall') {
-        return 'Put one printed template flat on the wall with one edge on the floor line, and the other flat with one edge on the height mark. Any orientation. Both in view, then Capture.'
-      }
-      if (twoRefLayout()) {
-        return 'Put one printed template against each jamb, one edge flush on the jamb face. Any orientation. Both flat and in view, then Capture.'
-      }
-      if (mode === 'wall') {
-        return 'Hold the printed template flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
-      }
-      return 'Lay the printed Letter template on the floor on the line between the jambs (any orientation). Step back so both jambs and the sheet are in view, then Capture.'
+    if (mode === 'wall') {
+      return `Hold the ${sheetWord()} flat on the wall between the floor and the height mark. Back up until both are in view.`
     }
-    if (twoRefLayout() && mode === 'wall') {
-      return `Put one ${noun} flat on the wall with one edge on the floor line, and the other flat with one edge on the height mark. Either orientation is fine. Both in view, then Capture.`
-    }
-    if (twoRefLayout()) {
-      return `Put one ${noun} flat against each jamb, one edge flush on the jamb face. Either orientation is fine. Both flat and in view, then Capture.`
-    }
-    if (mode === 'wall') return WALL_LIVE_INSTRUCTION
-    return FLOOR_LIVE_INSTRUCTION
+    return `Lay the ${sheetWord()} flat on the floor between the door jambs, square to the door. Back up until both jambs are in view.`
   }
 
   function resultInstruction() {
-    if (twoRefLayout()) return 'Result is on screen. Save to list, or Retake / Reset refs.'
-    return 'Result is on screen. Save to list, or Retake / Reset points.'
+    return 'Save this measurement, retake the photo, or clear the points.'
   }
 
   function instructionForState() {
@@ -2180,7 +2484,11 @@ function bootReferenceApp() {
     if (phase === 'live') return liveInstruction()
     if (phase === 'need-card-tap') return tapReferenceInstruction('a')
     if (phase === 'need-card-b') return tapReferenceInstruction('b')
-    if (phase === 'adjust-card' || phase === 'adjust-card-b') return adjustReferenceInstruction()
+    if (phase === 'adjust-card' || phase === 'adjust-card-b') {
+      return sheetHandlesVisible
+        ? 'Drag a corner if it is off, then tap Done'
+        : adjustReferenceInstruction()
+    }
     if (phase === 'point-a') return pointInstruction('a')
     if (phase === 'point-b') return pointInstruction('b')
     return resultInstruction()
@@ -2190,76 +2498,34 @@ function bootReferenceApp() {
     if (performance.now() < instructionHoldUntil) return
     const el = els.instructionText
     if (!el) return
-    el.classList.remove('is-flashing', 'is-flashing-ok')
     const next = instructionForState()
-    if (el.textContent !== next) {
-      el.textContent = next
-      setInstructionExpanded(false)
-    }
+    if (el.textContent !== next) el.textContent = next
+    updateStepPill()
   }
 
   function setInstructionExpanded(expanded) {
-    const el = els.instructionText
-    if (!el) return
-    const was = el.classList.contains('is-expanded')
-    el.classList.toggle('is-expanded', expanded)
-    el.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-    // The stage is fixed, so the line's height does not move the photo.
-    // Redraw in case the viewport changed while the line was collapsed.
-    if (was !== expanded) resizeMarks()
+    void expanded
   }
 
-  function toggleInstructionExpanded() {
-    const el = els.instructionText
-    if (!el) return
-    setInstructionExpanded(!el.classList.contains('is-expanded'))
-  }
+  function toggleInstructionExpanded() {}
 
   function showTemporaryInstruction(text, holdMs, tone) {
     const el = els.instructionText
+    if (!el) return
     el.textContent = text
-    setInstructionExpanded(false)
-    el.classList.remove('is-flashing', 'is-flashing-ok')
-    void el.offsetWidth
-    el.classList.add(tone === 'ok' ? 'is-flashing-ok' : 'is-flashing')
+    void tone
     instructionHoldUntil = performance.now() + holdMs
+    updateStepPill()
   }
 
-  function positionChrome() {
-    if (!els.instructionText || !els.topBar) return
-    let top = els.topBar.offsetHeight + 4
-    if (els.statusStrip && !els.statusStrip.hasAttribute('hidden')) {
-      top += els.statusStrip.offsetHeight + 4
-    }
-    if (els.referencePickerPopover && !els.referencePickerPopover.hasAttribute('hidden')) {
-      els.referencePickerPopover.style.top = `${top}px`
-      top += els.referencePickerPopover.offsetHeight + 4
-    }
-    if (els.customReferencePopover && !els.customReferencePopover.hasAttribute('hidden')) {
-      els.customReferencePopover.style.top = `${top}px`
-      top += els.customReferencePopover.offsetHeight + 4
-    }
-    els.instructionText.style.top = `${top}px`
-  }
+  function positionChrome() {}
 
   function setStatusOpen(open) {
-    if (!els.statusStrip || !els.statusToggle) return
-    if (open) els.statusStrip.removeAttribute('hidden')
-    else els.statusStrip.setAttribute('hidden', '')
-    document.body.classList.toggle('is-status-open', open)
-    els.statusToggle.setAttribute('aria-expanded', open ? 'true' : 'false')
-    els.statusToggle.setAttribute('aria-label', open ? 'Hide status' : 'Show status')
-    positionChrome()
+    void open
   }
 
   function setSheetExpanded(expanded) {
-    if (!els.readout || !els.belowFold || !els.sheetHandle) return
-    els.readout.classList.toggle('is-expanded', expanded)
-    if (expanded) els.belowFold.removeAttribute('hidden')
-    else els.belowFold.setAttribute('hidden', '')
-    els.sheetHandle.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-    els.sheetHandle.setAttribute('aria-label', expanded ? 'Collapse details' : 'Expand details')
-    if (els.sheetChevron) els.sheetChevron.textContent = expanded ? '▾' : '▴'
+    void expanded
   }
 
   function beginDrag(target, imagePoint, loc) {
@@ -2297,10 +2563,15 @@ function bootReferenceApp() {
       return
     }
     mode = next
-    els.floorModeButton.setAttribute('aria-pressed', mode === 'floor' ? 'true' : 'false')
-    els.wallModeButton.setAttribute('aria-pressed', mode === 'wall' ? 'true' : 'false')
+    if (els.floorModeButton) {
+      els.floorModeButton.setAttribute('aria-pressed', mode === 'floor' ? 'true' : 'false')
+    }
+    if (els.wallModeButton) {
+      els.wallModeButton.setAttribute('aria-pressed', mode === 'wall' ? 'true' : 'false')
+    }
     instructionHoldUntil = 0
     renderInstruction()
+    syncChrome()
     logDiagnostic(`mode ${mode}`)
   }
 
@@ -2402,8 +2673,7 @@ function bootReferenceApp() {
 
   function templateBarFields() {
     const fields = []
-    if (els.templateBarIn) fields.push(els.templateBarIn)
-    if (els.templateBarInRow) fields.push(els.templateBarInRow)
+    if (els.lineLengthInput) fields.push(els.lineLengthInput)
     return fields
   }
 
@@ -2430,23 +2700,12 @@ function bootReferenceApp() {
     }
   }
 
-  function renderPrintScaleCurrent() {
-    const el = els.printScaleCurrent
-    if (!el) return
-    if (!sessionPrintScale || !(sessionPrintScale.value > 0)) {
-      el.textContent = ''
-      el.setAttribute('hidden', '')
-      return
-    }
-    el.textContent = `current: ×${sessionPrintScale.value.toFixed(3)} (${sessionPrintScale.source})`
-    el.removeAttribute('hidden')
-  }
+  function renderPrintScaleCurrent() {}
 
   function rememberSessionPrintScale(value, source) {
     if (!(value > 0) || !Number.isFinite(value)) return
     if (source !== 'paper' && source !== 'bar') return
     sessionPrintScale = {value, source, at: Date.now()}
-    renderPrintScaleCurrent()
   }
 
   function applyCustomReference() {
@@ -2475,49 +2734,17 @@ function bootReferenceApp() {
   }
 
   function setPrimaryButton() {
-    const button = els.captureButton
     const locked = phase !== 'live'
-    els.floorModeButton.disabled = locked
-    els.wallModeButton.disabled = locked
-    if (els.oneRefButton) els.oneRefButton.disabled = locked
-    if (els.twoRefButton) els.twoRefButton.disabled = locked
-    if (els.referencePickerButton) els.referencePickerButton.disabled = locked
-    if (phase === 'live') {
-      if (visionReady) {
-        button.innerHTML = 'Capture'
-        // Stay tappable while the camera starts so iOS can grant getUserMedia
-        // from this tap. Vision has finished loading.
-        button.disabled = false
-      } else if (visionFailed) {
-        button.innerHTML = 'Vision failed'
-        button.disabled = true
-        // The strip is hidden on purpose. Open it so the load error is visible.
-        setStatusOpen(true)
-      } else {
-        button.innerHTML = 'Loading…'
-        button.disabled = true
-      }
-    } else if (phase === 'adjust-card' || phase === 'adjust-card-b') {
-      button.innerHTML = stackedLabel('Confirm', referenceNoun(false))
-      button.disabled = false
-    } else {
-      button.innerHTML = 'Retake'
-      button.disabled = false
+    if (els.floorModeButton) els.floorModeButton.disabled = locked
+    if (els.wallModeButton) els.wallModeButton.disabled = locked
+    if (els.shutterButton) {
+      els.shutterButton.disabled = uiStep !== 2 || cameraDenied
     }
+    syncChrome()
   }
 
   function refreshButtonLabels() {
-    updateReferenceChip()
     setPrimaryButton()
-    if (els.resetPointsButton && els.resetPointsButton.textContent !== 'Resetting') {
-      els.resetPointsButton.innerHTML = twoRefLayout() ? stackedLabel('Reset', 'refs') : stackedLabel('Reset', 'points')
-    }
-    if (els.logButton && els.logButton.textContent !== 'Saved') {
-      els.logButton.innerHTML = stackedLabel('Save', 'to list')
-    }
-    if (els.copyResultsButton && els.copyResultsButton.textContent !== 'Copied') {
-      els.copyResultsButton.innerHTML = stackedLabel('Copy', 'results')
-    }
   }
 
   function fitMappingFor(mediaW, mediaH) {
@@ -2575,10 +2802,10 @@ function bootReferenceApp() {
   function drawHandle(ctx, x, y) {
     ctx.beginPath()
     ctx.arc(x, y, 8, 0, Math.PI * 2)
-    ctx.fillStyle = '#39f3ff'
+    ctx.fillStyle = '#FFCB2E'
     ctx.fill()
     ctx.lineWidth = 2
-    ctx.strokeStyle = '#08100c'
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
     ctx.stroke()
   }
 
@@ -2624,7 +2851,7 @@ function bootReferenceApp() {
     ctx.moveTo(lx, ly - 14)
     ctx.lineTo(lx, ly + 14)
     ctx.lineWidth = 1.5
-    ctx.strokeStyle = '#39f3ff'
+    ctx.strokeStyle = '#FFCB2E'
     ctx.stroke()
   }
 
@@ -2636,56 +2863,11 @@ function bootReferenceApp() {
     ctx.fillText(text, x, y)
   }
 
-  // The box is 150 capture px on the reference's long edge, mapped with the
-  // preview's own video size so rotation still matches object-fit: contain.
   function drawLiveGuide(ctx) {
-    const video = els.preview
-    const mediaW = video ? video.videoWidth : 0
-    const mediaH = video ? video.videoHeight : 0
-    if (!mediaW || !mediaH) return
-    const spec = currentReference()
-    const longPx = GUIDE_LONG_EDGE_PX
-    const shortPx = longPx * (spec.shortMm / spec.longMm)
-    const fit = fitMappingFor(mediaW, mediaH)
-    const cx = mediaW / 2
-    const cy = mediaH / 2
-    const halfLong = longPx / 2
-    const halfShort = shortPx / 2
-    const corners = [
-      imageToLocal(cx - halfLong, cy - halfShort, fit),
-      imageToLocal(cx + halfLong, cy - halfShort, fit),
-      imageToLocal(cx + halfLong, cy + halfShort, fit),
-      imageToLocal(cx - halfLong, cy + halfShort, fit),
-    ]
-    ctx.save()
-    ctx.setLineDash([8, 6])
-    ctx.beginPath()
-    ctx.moveTo(corners[0].x, corners[0].y)
-    for (let i = 1; i < 4; i++) ctx.lineTo(corners[i].x, corners[i].y)
-    ctx.closePath()
-    ctx.lineWidth = 2
-    ctx.strokeStyle = '#ffe14a'
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.font = '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'top'
-    const caption = `${referenceNoun(false)} at least this big`
-    const captionX = (corners[0].x + corners[1].x) / 2
-    let captionY = corners[2].y + 8
-    // Keep the caption above the bottom sheet.
-    if (captionY > ctx.canvas.height - 110) captionY = corners[0].y + 8
-    strokeOutlinedText(ctx, caption, captionX, captionY)
-    if (window.innerHeight > window.innerWidth) {
-      ctx.textBaseline = 'bottom'
-      let hintY = ctx.canvas.height - 108
-      if (hintY < 24) hintY = ctx.canvas.height - 10
-      strokeOutlinedText(ctx, 'Turn sideways for a wider shot', ctx.canvas.width / 2, hintY)
-    }
-    ctx.restore()
+    void ctx
   }
 
-  function drawQuad(ctx, corners, stroke, fill, handles) {
+  function drawQuad(ctx, corners, stroke, fill, handles, lineWidth) {
     if (!corners || corners.length !== 4) return
     ctx.beginPath()
     const first = imageToLocal(corners[0].x, corners[0].y)
@@ -2697,7 +2879,7 @@ function bootReferenceApp() {
     ctx.closePath()
     ctx.fillStyle = fill
     ctx.fill()
-    ctx.lineWidth = 2
+    ctx.lineWidth = lineWidth || 2
     ctx.strokeStyle = stroke
     ctx.stroke()
     if (!handles) return
@@ -2719,39 +2901,169 @@ function bootReferenceApp() {
     ctx.stroke()
   }
 
+  function drawPointMarker(ctx, imagePoint, numeral, key) {
+    const local = imageToLocal(imagePoint.x, imagePoint.y)
+    const x = local.x
+    const y = local.y
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const pop = !reduceMotion && key && pointPopUntil[key] > performance.now()
+    ctx.save()
+    if (pop) {
+      ctx.translate(x, y)
+      ctx.scale(1.12, 1.12)
+      ctx.translate(-x, -y)
+    }
+    ctx.beginPath()
+    ctx.arc(x, y, 7, 0, Math.PI * 2)
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(x, y, 7, 0, Math.PI * 2)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#FFCB2E'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x - 9, y)
+    ctx.lineTo(x + 9, y)
+    ctx.moveTo(x, y - 9)
+    ctx.lineTo(x, y + 9)
+    ctx.lineWidth = 1.25
+    ctx.strokeStyle = '#FFCB2E'
+    ctx.stroke()
+
+    const discR = 17
+    let discX = x - 28
+    let discY = y - 36
+    if (discX < discR + 4) discX = x + 28
+    if (discY < discR + 4) discY = y + 36
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(discX, discY)
+    ctx.lineWidth = 3
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(discX, discY)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#FFCB2E'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(discX, discY, discR, 0, Math.PI * 2)
+    ctx.fillStyle = '#FFCB2E'
+    ctx.fill()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+    ctx.stroke()
+    ctx.fillStyle = '#16324F'
+    ctx.font = '800 22px "Atkinson Hyperlegible Next", system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(String(numeral), discX, discY + 1)
+    ctx.restore()
+  }
+
+  function liveInches() {
+    if (!homography || !points.a || !points.b) return null
+    const mappedA = applyHomography(homography, points.a.x, points.a.y)
+    const mappedB = applyHomography(homography, points.b.x, points.b.y)
+    if (!mappedA || !mappedB) return null
+    const sep = sheetAxisSeparationMm(mappedA, mappedB)
+    if (!sep || !Number.isFinite(sep.widthMm)) return null
+    return inchesFromMm(sep.widthMm)
+  }
+
+  function drawDimensionLine(ctx) {
+    if (!points.a || !points.b) return
+    const pa = imageToLocal(points.a.x, points.a.y)
+    const pb = imageToLocal(points.b.x, points.b.y)
+    const dx = pb.x - pa.x
+    const dy = pb.y - pa.y
+    const len = Math.hypot(dx, dy) || 1
+    const ux = dx / len
+    const uy = dy / len
+    const px = -uy
+    const py = ux
+    const tick = 10
+    ctx.save()
+    ctx.beginPath()
+    ctx.moveTo(pa.x, pa.y)
+    ctx.lineTo(pb.x, pb.y)
+    ctx.lineWidth = 6
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.45)'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(pa.x, pa.y)
+    ctx.lineTo(pb.x, pb.y)
+    ctx.lineWidth = 3
+    ctx.strokeStyle = '#FFCB2E'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(pa.x + px * tick, pa.y + py * tick)
+    ctx.lineTo(pa.x - px * tick, pa.y - py * tick)
+    ctx.moveTo(pb.x + px * tick, pb.y + py * tick)
+    ctx.lineTo(pb.x - px * tick, pb.y - py * tick)
+    ctx.lineWidth = 3
+    ctx.strokeStyle = '#FFCB2E'
+    ctx.stroke()
+
+    const inches = liveInches()
+    if (inches != null) {
+      const label = formatTapeInches(inches)
+      const mx = (pa.x + pb.x) / 2
+      const my = (pa.y + pb.y) / 2
+      let angle = Math.atan2(dy, dx)
+      if (angle > Math.PI / 2) angle -= Math.PI
+      if (angle < -Math.PI / 2) angle += Math.PI
+      ctx.translate(mx, my)
+      ctx.rotate(angle)
+      ctx.font = '800 16px "Atkinson Hyperlegible Next", system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const width = Math.max(52, ctx.measureText(label).width + 18)
+      const height = 26
+      roundRectPath(ctx, -width / 2, -height / 2 - 16, width, height, 8)
+      ctx.fillStyle = '#FFCB2E'
+      ctx.fill()
+      ctx.lineWidth = 1.5
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+      ctx.stroke()
+      ctx.fillStyle = '#16324F'
+      ctx.fillText(label, 0, -16)
+    }
+    ctx.restore()
+  }
+
+  function roundRectPath(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2)
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.arcTo(x + w, y, x + w, y + h, radius)
+    ctx.arcTo(x + w, y + h, x, y + h, radius)
+    ctx.arcTo(x, y + h, x, y, radius)
+    ctx.arcTo(x, y, x + w, y, radius)
+    ctx.closePath()
+  }
+
   function drawMarks() {
     const canvas = els.marks
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-    if (phase === 'live') {
-      drawLiveGuide(ctx)
-      return
-    }
+    if (phase === 'live' || uiStep < 3) return
 
-    const adjustingA = phase === 'adjust-card' || phase === 'need-card-tap'
-    const adjustingB = phase === 'adjust-card-b'
-    if (refACorners && !adjustingA) {
-      drawQuad(ctx, refACorners, '#ffe14a', 'rgba(255, 225, 74, 0.12)', false)
-    }
+    const flashing = performance.now() < sheetFlashUntil
+    const showHandles = sheetHandlesVisible && (phase === 'adjust-card' || phase === 'adjust-card-b')
     if (cardCorners && cardCorners.length === 4) {
-      const activeIsB = adjustingB || (twoRefLayout() && refACorners && phase !== 'adjust-card')
-      const stroke = activeIsB ? '#7dffb3' : '#ffe14a'
-      const fill = activeIsB ? 'rgba(125, 255, 179, 0.12)' : 'rgba(255, 225, 74, 0.12)'
-      drawQuad(ctx, cardCorners, stroke, fill, adjustingA || adjustingB)
-    }
-    if (refBCorners && phase !== 'adjust-card-b') {
-      drawQuad(ctx, refBCorners, '#7dffb3', 'rgba(125, 255, 179, 0.12)', false)
+      const stroke = flashing ? '#1F8A5B' : 'rgba(255, 203, 46, 0.95)'
+      const fill = flashing ? 'rgba(31, 138, 91, 0.22)' : 'rgba(255, 203, 46, 0.08)'
+      drawQuad(ctx, cardCorners, stroke, fill, showHandles, flashing ? 5 : 2)
     }
 
-    const keys = ['a', 'b']
-    for (let i = 0; i < keys.length; i++) {
-      const p = points[keys[i]]
-      if (!p) continue
-      const local = imageToLocal(p.x, p.y)
-      drawHandle(ctx, local.x, local.y)
-    }
-    drawSegment(ctx, points.a, points.b, '#ffe14a')
+    if (points.a && points.b) drawDimensionLine(ctx)
+    if (points.a) drawPointMarker(ctx, points.a, 1, 'a')
+    if (points.b) drawPointMarker(ctx, points.b, 2, 'b')
 
     if (loupePoint) {
       const guide = imageToLocal(loupePoint.x, loupePoint.y)
@@ -2760,21 +3072,27 @@ function bootReferenceApp() {
       ctx.moveTo(guideX, 0)
       ctx.lineTo(guideX, canvas.height)
       ctx.lineWidth = 1
-      ctx.strokeStyle = 'rgba(57, 243, 255, 0.4)'
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)'
       ctx.stroke()
       drawLoupe(ctx, loupePoint.x, loupePoint.y, loupePoint.localX, loupePoint.localY)
+    }
+
+    const popping = (pointPopUntil.a > performance.now()) || (pointPopUntil.b > performance.now())
+    if ((flashing || popping) && !sheetFlashRaf) {
+      sheetFlashRaf = requestAnimationFrame(() => {
+        sheetFlashRaf = 0
+        drawMarks()
+      })
     }
   }
 
   function clearResultText() {
-    els.resultInches.textContent = ''
-    els.resultCentimeters.textContent = ''
-    els.resultMeta.textContent = ''
-    if (els.resultWarning) {
-      els.resultWarning.textContent = ''
-      els.resultWarning.setAttribute('hidden', '')
-    }
-    if (els.readout) els.readout.classList.remove('has-warning')
+    if (els.resultInches) els.resultInches.textContent = ''
+    if (els.resultExact) els.resultExact.textContent = ''
+    if (els.resultScale) els.resultScale.textContent = ''
+    if (els.resultWarningText) els.resultWarningText.textContent = ''
+    if (els.resultWarning) els.resultWarning.setAttribute('hidden', '')
+    if (els.resultBlock) els.resultBlock.setAttribute('hidden', '')
   }
 
   function warningLines(reading) {
@@ -2821,21 +3139,32 @@ function bootReferenceApp() {
     }
   }
 
+  function scaleSourceLine(reading) {
+    if (reading.reference === 'letter' && reading.autoMarkers !== 'y') {
+      return 'Scaled from US Letter paper'
+    }
+    const line = Number.isFinite(templateBarIn) ? templateBarIn : TEMPLATE_LETTER_V1.barIn
+    return `Scaled from the printed sheet, line ${line.toFixed(2)} in`
+  }
+
   function renderResult(reading) {
-    els.resultInches.textContent = `${reading.inches.toFixed(1)} in`
-    els.resultCentimeters.textContent = `· ${reading.cm.toFixed(1)} cm`
-    els.resultMeta.textContent = reading.meta || ''
+    if (els.resultBlock) els.resultBlock.removeAttribute('hidden')
+    if (els.resultInches) els.resultInches.textContent = formatTapeInches(reading.inches)
+    if (els.resultExact) {
+      els.resultExact.textContent = `${reading.inches.toFixed(2)} in    ${reading.cm.toFixed(1)} cm`
+    }
+    if (els.resultScale) els.resultScale.textContent = scaleSourceLine(reading)
     const lines = warningLines(reading)
-    if (!els.resultWarning) return
+    if (!els.resultWarning || !els.resultWarningText) return
     if (lines.length === 0) {
-      els.resultWarning.textContent = ''
+      els.resultWarningText.textContent = ''
       els.resultWarning.setAttribute('hidden', '')
-      els.readout.classList.remove('has-warning')
+      els.resultWarning.classList.remove('is-loud')
       return
     }
-    els.resultWarning.textContent = lines.join(' ')
+    els.resultWarningText.textContent = lines.join(' ')
     els.resultWarning.removeAttribute('hidden')
-    els.readout.classList.add('has-warning')
+    els.resultWarning.classList.toggle('is-loud', !!reading.warningPrintScale)
   }
 
   function scaleUnreliable(ratio) {
@@ -2850,6 +3179,7 @@ function bootReferenceApp() {
     setPrimaryButton()
     renderInstruction()
     drawMarks()
+    syncChrome()
   }
 
   // Long/short, so Letter stays near 1.29 whichever edge is TL→TR.
@@ -3718,9 +4048,11 @@ function bootReferenceApp() {
 
   function finishPlacedQuad() {
     phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
+    sheetHandlesVisible = true
     setPrimaryButton()
     renderInstruction()
     drawMarks()
+    syncChrome()
   }
 
   // Plain-paper quad. flashOverride replaces the found/miss line, used when
@@ -3903,7 +4235,8 @@ function bootReferenceApp() {
     detectKind = kind
     const smallNote = longPx < SMALL_CARD_PX ? smallReferenceNote(longPx) : ''
     adjustNoun = null
-    phase = 'point-a'
+    sheetHandlesVisible = false
+    phase = points.a && points.b ? 'result' : (points.a ? 'point-b' : 'point-a')
     setPrimaryButton()
     if (smallNote) showTemporaryInstruction(smallNote, MESSAGE_HOLD_MS)
     else {
@@ -3911,6 +4244,8 @@ function bootReferenceApp() {
       renderInstruction()
     }
     drawMarks()
+    syncChrome()
+    if (points.a && points.b && homography) finishMeasurement()
   }
 
   function handleDistance(localX, localY, imagePoint) {
@@ -3969,6 +4304,7 @@ function bootReferenceApp() {
       return
     }
     if ((phase === 'adjust-card' || phase === 'adjust-card-b') && cardCorners) {
+      if (!sheetHandlesVisible) return
       const index = nearestCornerIndex(loc.localX, loc.localY)
       if (index >= 0) beginDrag({kind: 'corner', index: index}, cardCorners[index], loc)
       return
@@ -3983,6 +4319,7 @@ function bootReferenceApp() {
     const missing = firstMissingPoint()
     if (!missing || phase === 'result') return
     points[missing] = point(loc.x, loc.y)
+    pointPopUntil[missing] = performance.now() + 150
     beginDrag({kind: 'point', key: missing}, points[missing], loc)
   }
 
@@ -3997,6 +4334,10 @@ function bootReferenceApp() {
       points[dragTarget.key] = next
     }
     loupePoint = {x: next.x, y: next.y, localX: loc.localX, localY: loc.localY}
+    if (dragTarget.kind === 'point' && points.a && points.b && homography && els.resultInches) {
+      const inches = liveInches()
+      if (inches != null) els.resultInches.textContent = formatTapeInches(inches)
+    }
     drawMarks()
   }
 
@@ -4100,12 +4441,62 @@ function bootReferenceApp() {
     hideCustomForm()
     clearResultText()
     showStill()
+    sheetHandlesVisible = false
+    uiStep = 3
     phase = 'need-card-tap'
+    stopLiveCheck()
     setPrimaryButton()
     instructionHoldUntil = 0
     renderInstruction()
     resizeMarks()
     logDiagnostic(`capture ${width}×${height} layout=${layout} ref=${referenceToken(currentReference())} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
+    tryAutoDetectOnCapture()
+  }
+
+  function tryAutoDetectOnCapture() {
+    const tapX = captureWidth / 2
+    const tapY = captureHeight / 2
+    let markers = null
+    try {
+      markers = detectTemplate(tapX, tapY)
+    } catch (err) {
+      logDiagnostic(`detectTemplate threw: ${errorMessage(err)}`)
+      markers = null
+    }
+    const markerHit = markers && markers.ok && markers.markersFound >= 2
+      && markers.cardCorners && markers.cardCorners.length === 4
+    if (markerHit) {
+      applyTemplateDetection(markers)
+      pendingUsesTemplate = true
+      pendingAutoMarkers = 'y'
+      adjustNoun = 'template'
+      cardCorners = markers.cardCorners
+      originalCorners = cardCorners.map(copyPoint)
+      detectKind = 'auto'
+      detectStrategy = `markers${markers.markersFound}`
+      sheetHandlesVisible = false
+      sheetFlashUntil = performance.now() + FLASH_HOLD_MS
+      phase = 'adjust-card'
+      logDiagnostic(`auto-detected template via ${detectStrategy}`)
+      if (templatePrintSource === 'none' && !printScaleNudgeShown) {
+        printScaleNudgeShown = true
+        showTemporaryInstruction(PRINT_SCALE_NUDGE, DETECT_MESSAGE_HOLD_MS)
+      }
+      confirmCard()
+      if (phase === 'adjust-card') sheetHandlesVisible = true
+      drawMarks()
+      syncChrome()
+      return
+    }
+    phase = 'need-card-tap'
+    if (referenceKind === 'template') {
+      showTemporaryInstruction(tapReferenceInstruction('a'), DETECT_MESSAGE_HOLD_MS)
+    } else {
+      showTemporaryInstruction('Tap the paper', DETECT_MESSAGE_HOLD_MS)
+    }
+    setPrimaryButton()
+    renderInstruction()
+    syncChrome()
   }
 
   function retake() {
@@ -4113,45 +4504,27 @@ function bootReferenceApp() {
     clearCaptureGeometry()
     clearResultText()
     showLive()
+    sheetHandlesVisible = false
+    sheetFlashUntil = 0
+    uiStep = 2
     phase = 'live'
+    startLiveCheck()
     setPrimaryButton()
     instructionHoldUntil = 0
     renderInstruction()
     drawMarks()
+    syncChrome()
     logDiagnostic('retake')
   }
 
   function resetPoints() {
     endDrag()
-    if (twoRefLayout()) {
-      if (phase === 'live') return
-      refACorners = null
-      refBCorners = null
-      refADetect = 'manual'
-      refBDetect = 'manual'
-      refAStrategy = 'manual'
-      refBStrategy = 'manual'
-      cardCorners = null
-      originalCorners = null
-      detectKind = 'manual'
-      detectStrategy = 'manual'
-      homography = null
-      cardLongPx = 0
-      currentReading = null
-      clearMarkerFlags()
-      clearResultText()
-      phase = 'need-card-tap'
-      instructionHoldUntil = 0
-      setPrimaryButton()
-      renderInstruction()
-      drawMarks()
-      return
-    }
-    if (phase === 'live' || phase === 'need-card-tap' || phase === 'adjust-card') {
+    if (phase === 'live' || phase === 'need-card-tap') {
       points = {a: null, b: null}
       currentReading = null
       clearResultText()
       drawMarks()
+      syncChrome()
       return
     }
     if (!homography) {
@@ -4166,17 +4539,17 @@ function bootReferenceApp() {
     setPrimaryButton()
     renderInstruction()
     drawMarks()
+    syncChrome()
   }
 
   function onPrimaryButton() {
-    if (phase === 'live') {
+    if (uiStep === 2 || phase === 'live') {
       if (!cameraReady) {
         startCamera().then(() => {
-          if (cameraReady && visionReady) captureFrame()
+          if (cameraReady) captureFrame()
         })
         return
       }
-      if (!visionReady) return
       captureFrame()
       return
     }
@@ -4188,7 +4561,13 @@ function bootReferenceApp() {
   }
 
   function renderList() {
-    els.measurementSummary.textContent = `Session list (${measurements.length})`
+    if (els.measurementSummary) {
+      els.measurementSummary.textContent = `Session list (${measurements.length})`
+    }
+    if (els.savedToggle) {
+      els.savedToggle.textContent = `Saved measurements (${measurements.length})`
+    }
+    if (!els.measurementRows) return
     els.measurementRows.replaceChildren()
     if (measurements.length === 0) {
       const empty = document.createElement('p')
@@ -4295,10 +4674,11 @@ function bootReferenceApp() {
   }
 
   function markCopied() {
-    els.copyResultsButton.innerHTML = 'Copied'
+    if (!els.copyResultsButton) return
+    els.copyResultsButton.textContent = 'Copied'
     clearTimeout(copyLabelTimer)
     copyLabelTimer = setTimeout(() => {
-      els.copyResultsButton.innerHTML = stackedLabel('Copy', 'results')
+      els.copyResultsButton.textContent = 'Copy results'
     }, 1500)
   }
 
@@ -4376,22 +4756,25 @@ function bootReferenceApp() {
       focalSource: currentReading.focalSource || 'none',
     })
     renderList()
-    els.logButton.innerHTML = 'Saved'
+    updateMenuBadge()
+    if (els.saveButton) els.saveButton.textContent = 'Saved'
     clearTimeout(saveLabelTimer)
     saveLabelTimer = setTimeout(() => {
-      els.logButton.innerHTML = stackedLabel('Save', 'to list')
+      if (els.saveButton) els.saveButton.textContent = 'Save measurement'
     }, 1200)
-    const again = twoRefLayout() ? 'Reset refs' : 'Reset points'
-    showTemporaryInstruction(`Saved. Press ${again} or Retake for the next reading.`, MESSAGE_HOLD_MS)
+    showTemporaryInstruction('Saved', MESSAGE_HOLD_MS)
+    syncChrome()
   }
 
   function noteCameraSize() {
-    const width = els.preview.videoWidth
-    const height = els.preview.videoHeight
+    const width = els.preview && els.preview.videoWidth
+    const height = els.preview && els.preview.videoHeight
     if (!width || !height) return
     const label = `Camera: ${width}×${height}`
-    if (els.cameraResolution.textContent === label) return
-    els.cameraResolution.textContent = label
+    if (els.cameraResolution) {
+      if (els.cameraResolution.textContent === label) return
+      els.cameraResolution.textContent = label
+    }
     logDiagnostic(`camera ${width}×${height}`)
   }
 
@@ -4404,9 +4787,10 @@ function bootReferenceApp() {
   }
 
   function startCamera() {
+    if (cameraStream) return Promise.resolve()
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
       cameraDenied = true
-      els.cameraResolution.textContent = 'Camera: unavailable'
+      if (els.cameraResolution) els.cameraResolution.textContent = 'Camera: unavailable'
       instructionHoldUntil = 0
       renderInstruction()
       setPrimaryButton()
@@ -4437,7 +4821,7 @@ function bootReferenceApp() {
     }).catch((err) => {
       cameraDenied = true
       cameraReady = false
-      els.cameraResolution.textContent = 'Camera: denied'
+      if (els.cameraResolution) els.cameraResolution.textContent = 'Camera: denied'
       instructionHoldUntil = 0
       renderInstruction()
       setPrimaryButton()
@@ -4498,56 +4882,68 @@ function bootReferenceApp() {
   }
 
   function bindControls() {
-    els.floorModeButton.addEventListener('click', () => setMode('floor'))
-    els.wallModeButton.addEventListener('click', () => setMode('wall'))
-    if (els.oneRefButton) els.oneRefButton.addEventListener('click', () => setLayout('one'))
-    if (els.twoRefButton) els.twoRefButton.addEventListener('click', () => setLayout('two'))
-    if (els.referencePickerButton) {
-      els.referencePickerButton.addEventListener('click', () => toggleReferencePicker())
-    }
-    if (els.referencePickerPopover) {
-      els.referencePickerPopover.addEventListener('click', (event) => {
-        const option = event.target.closest('[data-reference]')
-        if (!option) return
-        setReference(option.getAttribute('data-reference'))
-      })
-    }
-    const barFields = templateBarFields()
-    for (let i = 0; i < barFields.length; i++) {
-      const field = barFields[i]
-      field.addEventListener('click', (event) => event.stopPropagation())
-      field.addEventListener('input', () => readTemplateBarField(field))
-      field.addEventListener('change', () => {
-        readTemplateBarField(field)
+    if (els.floorModeButton) els.floorModeButton.addEventListener('click', () => setMode('floor'))
+    if (els.wallModeButton) els.wallModeButton.addEventListener('click', () => setMode('wall'))
+    if (els.lineLengthInput) {
+      els.lineLengthInput.addEventListener('input', () => onLineLengthInput())
+      els.lineLengthInput.addEventListener('change', () => {
+        onLineLengthInput()
+        if (lineLengthConfirmed()) persistLineLength()
         resetTemplateScale()
         logDiagnostic(`bar measured ${templateBarIn.toFixed(2)} in`)
       })
     }
-    if (els.customApplyButton) els.customApplyButton.addEventListener('click', () => applyCustomReference())
-    if (els.customLongIn) {
-      els.customLongIn.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return
-        event.preventDefault()
-        applyCustomReference()
+    if (els.lineExactCheck) {
+      els.lineExactCheck.addEventListener('change', () => onExactCheck())
+    }
+    if (els.letterCheck) {
+      els.letterCheck.addEventListener('change', () => updateOpenCameraEnabled())
+    }
+    if (els.useLetterButton) {
+      els.useLetterButton.addEventListener('click', () => setSheetKind('letter'))
+    }
+    if (els.useTemplateButton) {
+      els.useTemplateButton.addEventListener('click', () => setSheetKind('template'))
+    }
+    if (els.openCameraButton) {
+      els.openCameraButton.addEventListener('click', () => openCameraFromStep1())
+    }
+    if (els.backButton) {
+      els.backButton.addEventListener('click', () => goToStep1())
+    }
+    if (els.shutterButton) {
+      els.shutterButton.addEventListener('click', () => {
+        if (!cameraReady) {
+          startCamera().then(() => {
+            if (cameraReady) captureFrame()
+          })
+          return
+        }
+        captureFrame()
       })
     }
-    if (els.customShortIn) {
-      els.customShortIn.addEventListener('keydown', (event) => {
-        if (event.key !== 'Enter') return
-        event.preventDefault()
-        applyCustomReference()
+    if (els.saveButton) els.saveButton.addEventListener('click', () => saveReading())
+    if (els.retakeButton) els.retakeButton.addEventListener('click', () => retake())
+    if (els.clearPointsButton) els.clearPointsButton.addEventListener('click', () => resetPoints())
+    if (els.adjustSheetButton) els.adjustSheetButton.addEventListener('click', () => beginAdjustSheet())
+    if (els.doneAdjustButton) els.doneAdjustButton.addEventListener('click', () => confirmCard())
+    if (els.looksRightButton) els.looksRightButton.addEventListener('click', () => confirmCard())
+    if (els.copyResultsButton) els.copyResultsButton.addEventListener('click', () => copyResults())
+    if (els.moreButton) els.moreButton.addEventListener('click', () => setMenuOpen(true))
+    if (els.moreButtonStage) els.moreButtonStage.addEventListener('click', () => setMenuOpen(true))
+    if (els.moreBackdrop) els.moreBackdrop.addEventListener('click', () => setMenuOpen(false))
+    if (els.savedToggle) {
+      els.savedToggle.addEventListener('click', () => toggleMenuPanel('saved'))
+    }
+    if (els.debugToggle) {
+      els.debugToggle.addEventListener('click', () => toggleMenuPanel('debug'))
+    }
+    if (els.changeSheetButton) {
+      els.changeSheetButton.addEventListener('click', () => {
+        setMenuOpen(false)
+        goToStep1()
       })
     }
-    els.instructionText.addEventListener('click', () => toggleInstructionExpanded())
-    els.instructionText.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return
-      event.preventDefault()
-      toggleInstructionExpanded()
-    })
-    els.captureButton.addEventListener('click', () => onPrimaryButton())
-    els.resetPointsButton.addEventListener('click', () => resetPoints())
-    els.logButton.addEventListener('click', () => saveReading())
-    els.copyResultsButton.addEventListener('click', () => copyResults())
     els.stage.addEventListener('pointerdown', onStagePointerDown)
     els.stage.addEventListener('pointermove', onStagePointerMove)
     els.stage.addEventListener('pointerup', onStagePointerUp)
@@ -4556,54 +4952,47 @@ function bootReferenceApp() {
       noteCameraSize()
       resizeMarks()
     })
-    // videoWidth/videoHeight can swap after rotation; refit the contain mapping.
     els.preview.addEventListener('resize', () => {
       noteCameraSize()
       resizeMarks()
     })
     window.addEventListener('resize', onViewportChange)
     window.addEventListener('orientationchange', onViewportChange)
-    window.addEventListener('pagehide', () => stopCamera())
+    window.addEventListener('pagehide', () => {
+      stopLiveCheck()
+      stopCamera()
+    })
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopLiveCheck()
+      else if (uiStep === 2) startLiveCheck()
+    })
     if (els.enableTiltButton) {
       els.enableTiltButton.addEventListener('click', () => requestTiltPermission())
-    }
-    if (els.statusToggle) {
-      els.statusToggle.addEventListener('click', () => {
-        const open = !els.statusStrip || els.statusStrip.hasAttribute('hidden')
-        setStatusOpen(open)
-      })
-    }
-    if (els.sheetHandle) {
-      els.sheetHandle.addEventListener('click', () => {
-        const expanded = !(els.readout && els.readout.classList.contains('is-expanded'))
-        setSheetExpanded(expanded)
-      })
     }
   }
 
   function onViewportChange() {
     refreshButtonLabels()
-    positionChrome()
     resizeMarks()
-    requestAnimationFrame(() => {
-      positionChrome()
-      resizeMarks()
-    })
+    requestAnimationFrame(() => resizeMarks())
   }
 
   function startApp() {
     cacheElements()
     bindControls()
-    positionChrome()
+    loadRememberedLineLength()
+    updateOpenCameraEnabled()
     resizeMarks()
     renderTilt()
     refreshButtonLabels()
     renderInstruction()
-    logDiagnostic('reference.js loaded')
+    syncChrome()
+    logDiagnostic('measure.js loaded')
     const ar = arucoApi()
     logDiagnostic(ar && typeof ar.Detector === 'function' ? 'js-aruco2 ready' : 'js-aruco2 missing')
 
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    if (els.enableTiltButton && typeof DeviceOrientationEvent !== 'undefined'
+        && typeof DeviceOrientationEvent.requestPermission === 'function') {
       els.enableTiltButton.hidden = false
     } else {
       bindOrientation()
@@ -4613,7 +5002,7 @@ function bootReferenceApp() {
     if (opencvScript) {
       opencvScript.addEventListener('error', () => {
         visionFailed = true
-        els.visionStatus.textContent = 'Vision library failed to load'
+        if (els.visionStatus) els.visionStatus.textContent = 'Vision library failed to load'
         setPrimaryButton()
         logDiagnostic('opencv script error')
       })
@@ -4621,17 +5010,15 @@ function bootReferenceApp() {
 
     waitForOpenCv().then(() => {
       visionReady = true
-      els.visionStatus.textContent = 'Vision ready'
+      if (els.visionStatus) els.visionStatus.textContent = 'Vision ready'
       setPrimaryButton()
       logDiagnostic('OpenCV.js ready')
     }).catch((err) => {
       visionFailed = true
-      els.visionStatus.textContent = 'Vision library failed to load'
+      if (els.visionStatus) els.visionStatus.textContent = 'Vision library failed to load'
       setPrimaryButton()
       logDiagnostic(`OpenCV.js: ${errorMessage(err)}`)
     })
-
-    startCamera()
   }
 
   if (document.readyState === 'loading') {

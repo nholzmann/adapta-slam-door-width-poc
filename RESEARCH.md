@@ -142,3 +142,15 @@ Printed markers are tried on every tap before the picker's outline search. Two o
 ### Why this tab exists (SLAM field test)
 
 A taped **32.0 in** door read **21.1 in** on the SLAM tab, with the engine's camera-height estimate at **0.81 m** (it wandered 0.47–1.76 m across the session). Scale drift is confirmed. That is not viable at the ±0.5 in success line, which is why this still-image planar method exists as a second measurement.
+
+## 2026-09-24 — Guided flow (round 14)
+
+Removed from the product, not from this history:
+
+- **SLAM / 8th Wall.** The engine is no longer loaded. `index.html` is the still-photo flow; `app.js` and `LICENSE-8thwall-engine.txt` are deleted. Scale drift on the SLAM tab is already documented above (32.0 in taped, 21.1 in read, camera height wandering 0.47–1.76 m).
+- **Credit card and the other paper presets** (legal pad, notepad, A4, custom size). A card is too small: the homography learned recession from edges about 35 px tall and a 32 in door read 98 in. That error budget is already documented above.
+- **Two-reference layout, the reference picker popover, and the top tab bar.** The measuring page is one guided flow. The printed Adapta template is the primary reference; plain US Letter is the fallback.
+
+Line-length memory: the taped 6 in line is stored in `localStorage` under `adapta.lineLengthIn` (every read/write in try/catch). It used to be session-only and cleared on reload. The recovered print-scale factor from the paper edge is still session-only.
+
+The measurement math is unchanged: marker positions, template geometry, homography, perspective aspect recovery, `choosePrintScale`, paper-edge checksum, axis projection, and warning thresholds. `tools/check-homography.js` still exports and checks the card / two-ref / custom symbols even though the UI no longer offers them.

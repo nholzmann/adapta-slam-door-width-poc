@@ -1,5 +1,5 @@
-// Renders TEMPLATE_LETTER_V1 onto the printable page. reference.js must load
-// first; this file no-ops without #page so the Reference tab is unaffected.
+// Renders TEMPLATE_LETTER_V1 onto the printable page. measure.js must load
+// first; this file no-ops without #page so the measuring page is unaffected.
 
 function arucoMipBits(id) {
   const api = (window.JSARUCO && window.JSARUCO.AR) || (typeof AR !== 'undefined' ? AR : null)
