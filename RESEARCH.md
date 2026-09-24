@@ -153,4 +153,4 @@ Removed from the product, not from this history:
 
 Line-length memory: the taped 6 in line is stored in `localStorage` under `adapta.lineLengthIn` (every read/write in try/catch). It used to be session-only and cleared on reload. The recovered print-scale factor from the paper edge is still session-only.
 
-The measurement math is unchanged: marker positions, template geometry, homography, perspective aspect recovery, `choosePrintScale`, paper-edge checksum, axis projection, and warning thresholds. `tools/check-homography.js` still exports and checks the card / two-ref / custom symbols even though the UI no longer offers them.
+The measurement math is unchanged: marker positions, template geometry, homography, perspective aspect recovery, `choosePrintScale`, paper-edge checksum, axis projection, and warning thresholds. measure.js still exports the card / two-ref / custom symbols used by `tools/check-homography.js`.

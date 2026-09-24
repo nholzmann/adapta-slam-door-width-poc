@@ -35,7 +35,7 @@ If you cannot print, you can use a blank US Letter sheet (8.5 × 11 in) instead.
 ## Step 1 — Your sheet
 
 1. Open the measuring page. The camera does not start yet.
-2. For the printed sheet: type the taped line length, or tick **It measures exactly 6 in**. The Open camera button stays off until the length is between 5.5 and 6.5 in, or the checkbox is ticked. If you typed a length last time, it should already be filled in with a note that it was remembered.
+2. For the printed sheet: the line-length field starts empty. Type the taped line length (between 5.5 and 6.5 in), or tick **It measures exactly 6 in**. The Open camera button stays off until you do one of those, or a remembered length from last time is filled in. Ticking the checkbox or typing 6.00 counts as a tape measurement of 6 in.
 3. If you do not have the sheet, tap **Using plain printer paper instead** and tick **It’s US Letter, 8.5 × 11 in**.
 4. Tap **Open camera** and allow the camera if asked.
 
@@ -53,7 +53,7 @@ If you cannot print, you can use a blank US Letter sheet (8.5 × 11 in) instead.
 2. If it did not find the sheet: tap the sheet (or the paper, on the Letter path). Drag a corner if needed, then **Looks right** or **Done**.
 3. Tap **where the left jamb meets the floor**. Press and slide; a magnifier appears while your finger is down. Lift when the crosshair sits on the jamb.
 4. Tap **where the right jamb meets the floor** the same way. For height: tap the floor at the wall, then the height mark.
-5. The big number is the width to the nearest ⅛ in. The smaller line is decimal inches and centimeters. A quiet line says where the scale came from. If you see a caution about **print scale unverified**, tape the 6 in line and enter it in step 1, then retake — do not trust those inches.
+5. The big number is the width to the nearest ⅛ in. The smaller line is decimal inches and centimeters. A quiet line says where the scale came from. If you used plain Letter paper and the printed sheet was found anyway, and you never entered a line length, you may see **print scale unverified** — tape the 6 in line in step 1, then retake. A confirmed 6.00 in line does not show that warning.
 6. Tap **Save measurement**. Repeat for **three** captures per door. Use **Retake** between them (this keeps the step 1 settings). **Clear points** keeps the photo and the sheet outline.
 
 A reading whose `print_warning` is `y` is uncorrected. Home printers often shrink to about 97 %, which would read a 36 in door as about 37.1 in.
