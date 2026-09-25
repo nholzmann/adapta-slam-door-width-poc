@@ -35,7 +35,6 @@ const FIT_RMS_WARN_MM = 3
 const SCALE_DRIFT_WARN_TIGHT = 0.05
 const SCALE_DRIFT_WARN_LOOSE = 0.15
 const SCALE_DRIFT_LOOSE_PX = 400
-const LINES_ANGLE_WARN_DEG = 3
 const SCALE_RATIO_WARN = 1.3
 const MARKER_RMS_WARN_MM = 1.5
 const PRINT_SCALE_AGREE = 0.01
@@ -674,15 +673,10 @@ function choosePrintScale(barIn, paperLongMm, paperShortMm) {
   return {printScale: null, source: 'none', status: 'unverified'}
 }
 
-const FLOOR_LIVE_INSTRUCTION = 'Lay a plain sheet of printer paper on the floor on the line between the jambs. Either orientation is fine. Step back so both jambs and the sheet are in view, then Capture.'
-const WALL_LIVE_INSTRUCTION = 'Hold a plain sheet of printer paper flat on the wall, on the line between the floor and the height mark. Get both in view, then Capture.'
 const CAMERA_DENIED_INSTRUCTION = 'Camera permission was denied. Reload the page and allow camera access.'
 const NEED_POINTS_INSTRUCTION = 'Place both points before saving.'
-const NEED_REFS_INSTRUCTION = 'Confirm both references before saving.'
 const NEED_SAVED_INSTRUCTION = 'Save a measurement to the list first.'
-const MODE_LOCKED_INSTRUCTION = 'Mode can only be changed before Capture.'
-const LAYOUT_LOCKED_INSTRUCTION = 'Layout can only be changed before Capture.'
-const REFERENCE_LOCKED_INSTRUCTION = 'Reference can only be changed before Capture.'
+const MODE_LOCKED_INSTRUCTION = 'Mode can only be changed before taking the photo.'
 const DISAGREE_WARNING = 'References disagree — check that both lie flat on the same surface, then Retake.'
 const FLUSH_WARNING = 'The outer edges are not parallel — re-seat each reference so one edge is flush against the jamb or the mark, then Retake.'
 const SCALE_WARNING = 'Unreliable: reference is far from the points or too small. Put it on the line between the points, or use 2 refs.'
@@ -1912,16 +1906,14 @@ function bootReferenceApp() {
   const captureCanvas = document.createElement('canvas')
   const captureCtx = captureCanvas.getContext('2d')
   const LINE_LENGTH_KEY = 'adapta.lineLengthIn'
-  const LINE_MIN_IN = 5.5
+  const LINE_MIN_IN = 5
   const LINE_MAX_IN = 6.5
   const TAPE_FRACTION_GLYPHS = ['', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞']
 
   let uiStep = 1
   let phase = 'live'
   let mode = 'floor'
-  let layout = 'one'
   let referenceKind = 'template'
-  let customRef = null
   let templatePrintScaleValue = 1
   let templatePrintSource = 'none'
   let templatePrintStatus = 'unverified'
@@ -1943,15 +1935,8 @@ function bootReferenceApp() {
   let captureGamma = null
   let cardCorners = null
   let originalCorners = null
-  let refACorners = null
-  let refBCorners = null
-  let refADetect = 'manual'
-  let refBDetect = 'manual'
-  let refAStrategy = 'manual'
-  let refBStrategy = 'manual'
   let pendingUsesTemplate = false
   let pendingAutoMarkers = 'n'
-  let refAUsesTemplate = false
   let adjustNoun = null
   let readingUsesTemplate = false
   let readingAutoMarkers = 'n'
@@ -2321,7 +2306,7 @@ function bootReferenceApp() {
       if (detectingSheet) detail = 'Looking for the sheet…'
       else if (phase === 'need-card-tap') {
         detail = referenceKind === 'letter' ? 'Tap the paper' : 'Find the sheet'
-      } else if (phase === 'adjust-card' || phase === 'adjust-card-b') {
+      } else if (phase === 'adjust-card') {
         detail = sheetHandlesVisible ? 'Adjust the sheet' : 'Mark the two sides'
       } else if (phase === 'point-a') detail = pointInstruction('a')
       else if (phase === 'point-b') detail = pointInstruction('b')
@@ -2351,7 +2336,7 @@ function bootReferenceApp() {
     setHidden(els.modeToggle, uiStep !== 2)
     setHidden(els.resultBlock, !(uiStep === 3 && currentReading))
     const adjusting = uiStep === 3 && sheetHandlesVisible
-      && (phase === 'adjust-card' || phase === 'adjust-card-b')
+      && phase === 'adjust-card'
     const canAdjust = uiStep === 3 && cardCorners && !sheetHandlesVisible
       && (phase === 'point-a' || phase === 'point-b' || phase === 'result')
     const letterAdjust = adjusting && !pendingUsesTemplate
@@ -2446,14 +2431,6 @@ function bootReferenceApp() {
     return word.charAt(0).toUpperCase() + word.slice(1)
   }
 
-  function referenceChipLabel() {
-    return referenceKind === 'letter' ? 'Letter' : 'Template'
-  }
-
-  function twoRefLayout() {
-    return layout === 'two'
-  }
-
   function formatAngle(value) {
     if (value == null || !Number.isFinite(value)) return '—'
     return `${value.toFixed(1)}°`
@@ -2521,8 +2498,7 @@ function bootReferenceApp() {
     if (detectingSheet) return 'Looking for the sheet…'
     if (phase === 'live') return liveInstruction()
     if (phase === 'need-card-tap') return tapReferenceInstruction('a')
-    if (phase === 'need-card-b') return tapReferenceInstruction('b')
-    if (phase === 'adjust-card' || phase === 'adjust-card-b') {
+    if (phase === 'adjust-card') {
       return sheetHandlesVisible
         ? `Drag a corner if it is off, then tap ${confirmActionLabel()}`
         : adjustReferenceInstruction()
@@ -2561,8 +2537,6 @@ function bootReferenceApp() {
       syncChrome()
     }, holdMs)
   }
-
-  function positionChrome() {}
 
   function setStatusOpen(open) {
     void open
@@ -2619,102 +2593,6 @@ function bootReferenceApp() {
     logDiagnostic(`mode ${mode}`)
   }
 
-  function updateReferenceChip() {
-    if (!els.referencePickerButton) return
-    els.referencePickerButton.textContent = referenceChipLabel()
-    els.referencePickerButton.setAttribute('aria-pressed', 'true')
-    if (!els.referencePickerPopover) return
-    const options = els.referencePickerPopover.querySelectorAll('[data-reference]')
-    for (let i = 0; i < options.length; i++) {
-      const selected = options[i].getAttribute('data-reference') === referenceKind
-      options[i].setAttribute('aria-pressed', selected ? 'true' : 'false')
-    }
-  }
-
-  function hideReferencePicker() {
-    if (!els.referencePickerPopover) return
-    els.referencePickerPopover.setAttribute('hidden', '')
-    if (els.referencePickerButton) els.referencePickerButton.setAttribute('aria-expanded', 'false')
-    positionChrome()
-  }
-
-  function showReferencePicker() {
-    if (!els.referencePickerPopover) return
-    hideCustomForm()
-    updateReferenceChip()
-    els.referencePickerPopover.removeAttribute('hidden')
-    if (els.referencePickerButton) els.referencePickerButton.setAttribute('aria-expanded', 'true')
-    positionChrome()
-  }
-
-  function hideCustomForm() {
-    if (!els.customReferencePopover) return
-    els.customReferencePopover.setAttribute('hidden', '')
-    positionChrome()
-  }
-
-  function showCustomForm() {
-    if (!els.customReferencePopover) return
-    hideReferencePicker()
-    if (customRef) {
-      els.customLongIn.value = formatInchesToken(customRef.longIn)
-      els.customShortIn.value = formatInchesToken(customRef.shortIn)
-    }
-    els.customReferencePopover.removeAttribute('hidden')
-    positionChrome()
-    if (els.customLongIn) els.customLongIn.focus()
-  }
-
-  function toggleReferencePicker() {
-    if (phase !== 'live') {
-      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
-      return
-    }
-    const pickerOpen = els.referencePickerPopover && !els.referencePickerPopover.hasAttribute('hidden')
-    const customOpen = els.customReferencePopover && !els.customReferencePopover.hasAttribute('hidden')
-    if (pickerOpen || customOpen) {
-      hideReferencePicker()
-      hideCustomForm()
-      return
-    }
-    showReferencePicker()
-  }
-
-  function setLayout(next) {
-    if (phase !== 'live') {
-      showTemporaryInstruction(LAYOUT_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
-      return
-    }
-    layout = next === 'two' ? 'two' : 'one'
-    if (els.oneRefButton) els.oneRefButton.setAttribute('aria-pressed', layout === 'one' ? 'true' : 'false')
-    if (els.twoRefButton) els.twoRefButton.setAttribute('aria-pressed', layout === 'two' ? 'true' : 'false')
-    refreshButtonLabels()
-    instructionHoldUntil = 0
-    renderInstruction()
-    logDiagnostic(`layout ${layout}`)
-  }
-
-  function setReference(next) {
-    if (phase !== 'live') {
-      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
-      return
-    }
-    if (next === 'custom') {
-      showCustomForm()
-      return
-    }
-    if (next !== 'card' && next !== 'letter' && next !== 'template' && next !== 'legal' && next !== 'notepad' && next !== 'a4') return
-    hideCustomForm()
-    hideReferencePicker()
-    referenceKind = next
-    readTemplateBarField()
-    updateReferenceChip()
-    instructionHoldUntil = 0
-    renderInstruction()
-    drawMarks()
-    logDiagnostic(`reference ${referenceToken(currentReference())}`)
-  }
-
   function templateBarFields() {
     const fields = []
     if (els.lineLengthInput) fields.push(els.lineLengthInput)
@@ -2750,31 +2628,6 @@ function bootReferenceApp() {
     if (!(value > 0) || !Number.isFinite(value)) return
     if (source !== 'paper' && source !== 'bar') return
     sessionPrintScale = {value, source, at: Date.now()}
-  }
-
-  function applyCustomReference() {
-    if (phase !== 'live') {
-      showTemporaryInstruction(REFERENCE_LOCKED_INSTRUCTION, MESSAGE_HOLD_MS)
-      return
-    }
-    const longIn = Number(String(els.customLongIn.value).trim())
-    const shortIn = Number(String(els.customShortIn.value).trim())
-    if (!(longIn > 0) || !(shortIn > 0) || longIn > 40 || shortIn > 40) {
-      showTemporaryInstruction('Enter both edges in inches, up to 40.', MESSAGE_HOLD_MS)
-      return
-    }
-    if (longIn < shortIn) {
-      showTemporaryInstruction('Long edge should be the longer side.', MESSAGE_HOLD_MS)
-      return
-    }
-    customRef = customReference(longIn, shortIn)
-    referenceKind = 'custom'
-    updateReferenceChip()
-    hideCustomForm()
-    instructionHoldUntil = 0
-    renderInstruction()
-    drawMarks()
-    logDiagnostic(`reference ${referenceToken(customRef)}`)
   }
 
   function setPrimaryButton() {
@@ -3119,7 +2972,7 @@ function bootReferenceApp() {
     if (phase === 'live' || uiStep < 3) return
 
     const flashing = performance.now() < sheetFlashUntil
-    const showHandles = sheetHandlesVisible && (phase === 'adjust-card' || phase === 'adjust-card-b')
+    const showHandles = sheetHandlesVisible && phase === 'adjust-card'
     if (cardCorners && cardCorners.length === 4) {
       const stroke = flashing ? '#1F8A5B' : 'rgba(255, 203, 46, 0.95)'
       const fill = flashing ? 'rgba(31, 138, 91, 0.22)' : 'rgba(255, 203, 46, 0.08)'
@@ -3309,7 +3162,7 @@ function bootReferenceApp() {
     const spec = readingSpec || currentReference()
     const reading = {
       mode,
-      layout: twoRefLayout() ? '2refs' : '1ref',
+      layout: '1ref',
       reference: referenceToken(spec),
       autoMarkers: readingAutoMarkers === 'y' ? 'y' : 'n',
       imageW: captureWidth,
@@ -3392,61 +3245,6 @@ function bootReferenceApp() {
   function formatRatio(value) {
     if (value == null || !Number.isFinite(value)) return '—'
     return value.toFixed(2)
-  }
-
-  function finishTwoRef(measured, detect, strategy) {
-    const inches = inchesFromMm(measured.widthMm)
-    const angle = measured.linesAngleDeg
-    const drift = measured.scaleDrift
-    const driftWarn = scaleDriftWarn(measured.refAPx, measured.refBPx)
-    const disagree = measured.fitRmsMm > FIT_RMS_WARN_MM || Math.abs(drift - 1) > driftWarn
-    const extra = templateFields()
-    const printBit = printScaleMeta()
-    const printClause = printBit ? ` · ${printBit}` : ''
-    const aspectInfo = readingAspectFields()
-    const reading = baseReading({
-      mm: measured.widthMm,
-      inches,
-      cm: measured.widthMm / 10,
-      cardLongPx: measured.refAPx,
-      detect,
-      detectStrategy: strategy,
-      linesAngleDeg: angle,
-      linesSpreadMm: measured.spreadMm,
-      rawPointIn: null,
-      axisAngleDeg: null,
-      orientA: measured.orientA,
-      orientB: measured.orientB,
-      scaleRatioA: null,
-      scaleRatioB: null,
-      fitRmsMm: measured.fitRmsMm,
-      scaleDrift: drift,
-      refAPx: measured.refAPx,
-      refBPx: measured.refBPx,
-      warningDisagree: disagree,
-      warningAngle: angle != null && angle > LINES_ANGLE_WARN_DEG,
-      warningAxis: false,
-      warningScale: false,
-      printScale: extra.printScale,
-      printScaleSource: extra.printScaleSource,
-      markersFound: extra.markersFound,
-      markerRmsMm: extra.markerRmsMm,
-      warningFlat: extra.warningFlat,
-      warningPrintScale: extra.warningPrintScale,
-      aspectRatioEst: aspectInfo.aspectRatioEst,
-      focalSource: aspectInfo.focalSource,
-      autoMarkers: aspectInfo.autoMarkers,
-      meta: `rms ${measured.fitRmsMm.toFixed(1)} mm · drift ${drift.toFixed(2)} · A ${measured.orientA} ${Math.round(measured.refAPx)} px · B ${measured.orientB} ${Math.round(measured.refBPx)} px · ∠ ${formatAngle(angle)} · ${aspectInfo.text}${printClause} · ${captureWidth}×${captureHeight} · tilt β ${formatAngle(captureBeta)} γ ${formatAngle(captureGamma)}`,
-    })
-    showReading(reading)
-    const smallA = measured.refAPx < SMALL_CARD_PX
-    const smallB = measured.refBPx < SMALL_CARD_PX
-    if (smallA || smallB) {
-      showTemporaryInstruction(
-        `${referenceNoun(true)} is small in the image (A ${Math.round(measured.refAPx)} px, B ${Math.round(measured.refBPx)} px). Retake closer for better accuracy.`,
-        MESSAGE_HOLD_MS
-      )
-    }
   }
 
   function detectIsManual() {
@@ -4118,7 +3916,7 @@ function bootReferenceApp() {
   }
 
   function finishPlacedQuad() {
-    phase = twoRefLayout() && refACorners ? 'adjust-card-b' : 'adjust-card'
+    phase = 'adjust-card'
     sheetHandlesVisible = true
     setPrimaryButton()
     renderInstruction()
@@ -4173,7 +3971,7 @@ function bootReferenceApp() {
     if (captureTemplateMissed) {
       pendingUsesTemplate = false
       pendingAutoMarkers = 'n'
-      if (!refAUsesTemplate) applyTemplateDetection(null)
+      applyTemplateDetection(null)
       adjustNoun = 'sheet'
       logDiagnostic('markers: capture miss — tap-seeded Letter search')
       placePlainQuad(tapX, tapY, LETTER_REF, null)
@@ -4217,8 +4015,7 @@ function bootReferenceApp() {
     }
     pendingUsesTemplate = false
     pendingAutoMarkers = 'n'
-    // Keep a template scale already recovered for the other reference.
-    if (!refAUsesTemplate) applyTemplateDetection(null)
+    applyTemplateDetection(null)
     if (referenceKind === 'template') {
       adjustNoun = 'sheet'
       logDiagnostic('markers: no markers found — treating as plain Letter paper')
@@ -4234,14 +4031,13 @@ function bootReferenceApp() {
   }
 
   function confirmCard() {
-    const which = twoRefLayout() && refACorners ? 'b' : 'a'
     if (!cardCorners || cardCorners.length !== 4) {
-      showTemporaryInstruction(tapReferenceInstruction(which), MESSAGE_HOLD_MS)
+      showTemporaryInstruction(tapReferenceInstruction('a'), MESSAGE_HOLD_MS)
       return
     }
     const dragged = detectIsManual()
     const usesTemplate = pendingUsesTemplate
-    const spec = placedSpec(twoRefLayout() && refACorners ? refAUsesTemplate : usesTemplate)
+    const spec = placedSpec(usesTemplate)
     const result = homographyPixelsToMm(cardCorners, spec, captureWidth, captureHeight)
     if (!result || !result.H) {
       showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
@@ -4252,60 +4048,6 @@ function bootReferenceApp() {
     const ordered = result.ordered.map(copyPoint)
     const longPx = result.cardLongPx
     logDiagnostic(`${referenceNoun(false)} confirmed: long edge ${Math.round(longPx)} px detect=${kind} strategy=${strategy}`)
-    if (twoRefLayout() && !refACorners) {
-      refACorners = ordered
-      refADetect = kind
-      refAStrategy = strategy
-      refAUsesTemplate = usesTemplate
-      cardCorners = null
-      originalCorners = null
-      detectKind = 'manual'
-      detectStrategy = 'manual'
-      homography = null
-      const smallNote = longPx < SMALL_CARD_PX ? smallReferenceNote(longPx) : ''
-      adjustNoun = null
-      phase = 'need-card-b'
-      setPrimaryButton()
-      if (smallNote) showTemporaryInstruction(smallNote, MESSAGE_HOLD_MS)
-      else {
-        instructionHoldUntil = 0
-        renderInstruction()
-      }
-      drawMarks()
-      return
-    }
-    if (twoRefLayout()) {
-      if (refAUsesTemplate !== usesTemplate) {
-        logDiagnostic('markers: refs disagree on markers — fitting with the first reference')
-      }
-      armReading(refAUsesTemplate)
-      refBDetect = kind
-      refBStrategy = strategy
-      const measured = twoReferenceDestinationMm(
-        refACorners,
-        ordered,
-        readingSpec,
-        mode,
-        captureWidth,
-        captureHeight
-      )
-      if (!measured) {
-        cardCorners = ordered
-        phase = 'adjust-card-b'
-        showTemporaryInstruction(homographyFailInstruction(), MESSAGE_HOLD_MS)
-        drawMarks()
-        return
-      }
-      refBCorners = ordered
-      cardCorners = null
-      originalCorners = null
-      readingAspect = measured.aspectA || null
-      readingAspectB = measured.aspectB || null
-      adjustNoun = null
-      const detect = refADetect === 'manual' || refBDetect === 'manual' ? 'manual' : 'auto'
-      finishTwoRef(measured, detect, `${refAStrategy}+${refBStrategy}`)
-      return
-    }
     armReading(usesTemplate)
     readingAspect = result.aspect || null
     readingAspectB = null
@@ -4348,7 +4090,7 @@ function bootReferenceApp() {
   }
 
   function placingPoints() {
-    return phase === 'point-a' || phase === 'point-b' || (phase === 'result' && !twoRefLayout())
+    return phase === 'point-a' || phase === 'point-b' || phase === 'result'
   }
 
   function nearestPointKey(localX, localY) {
@@ -4385,11 +4127,11 @@ function bootReferenceApp() {
     event.preventDefault()
     els.stage.setPointerCapture(event.pointerId)
     const loc = clientToImage(event.clientX, event.clientY)
-    if (phase === 'need-card-tap' || phase === 'need-card-b') {
+    if (phase === 'need-card-tap') {
       placeCardAtTap(loc.x, loc.y)
       return
     }
-    if ((phase === 'adjust-card' || phase === 'adjust-card-b') && cardCorners) {
+    if (phase === 'adjust-card' && cardCorners) {
       if (!sheetHandlesVisible) return
       const index = nearestCornerIndex(loc.localX, loc.localY)
       if (index >= 0) beginDrag({kind: 'corner', index: index}, cardCorners[index], loc)
@@ -4477,7 +4219,6 @@ function bootReferenceApp() {
   function clearMarkerFlags() {
     pendingUsesTemplate = false
     pendingAutoMarkers = 'n'
-    refAUsesTemplate = false
     adjustNoun = null
     readingUsesTemplate = false
     readingAutoMarkers = 'n'
@@ -4489,12 +4230,6 @@ function bootReferenceApp() {
   function clearCaptureGeometry() {
     cardCorners = null
     originalCorners = null
-    refACorners = null
-    refBCorners = null
-    refADetect = 'manual'
-    refBDetect = 'manual'
-    refAStrategy = 'manual'
-    refBStrategy = 'manual'
     detectKind = 'manual'
     detectStrategy = 'manual'
     homography = null
@@ -4524,8 +4259,6 @@ function bootReferenceApp() {
     captureBeta = beta
     captureGamma = gamma
     clearCaptureGeometry()
-    hideReferencePicker()
-    hideCustomForm()
     clearResultText()
     showStill()
     sheetHandlesVisible = false
@@ -4543,7 +4276,7 @@ function bootReferenceApp() {
     instructionHoldUntil = 0
     renderInstruction()
     resizeMarks()
-    logDiagnostic(`capture ${width}×${height} layout=${layout} ref=${referenceToken(currentReference())} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
+    logDiagnostic(`capture ${width}×${height} layout=1ref ref=${referenceToken(currentReference())} β=${formatAngle(captureBeta)} γ=${formatAngle(captureGamma)}`)
     syncChrome()
     requestAnimationFrame(() => {
       setTimeout(tryAutoDetectOnCapture, 0)
@@ -4643,24 +4376,6 @@ function bootReferenceApp() {
     renderInstruction()
     drawMarks()
     syncChrome()
-  }
-
-  function onPrimaryButton() {
-    if (uiStep === 2 || phase === 'live') {
-      if (!cameraReady) {
-        startCamera().then(() => {
-          if (cameraReady) captureFrame()
-        })
-        return
-      }
-      captureFrame()
-      return
-    }
-    if (phase === 'adjust-card' || phase === 'adjust-card-b') {
-      confirmCard()
-      return
-    }
-    retake()
   }
 
   function renderList() {
@@ -4835,7 +4550,7 @@ function bootReferenceApp() {
 
   function saveReading() {
     if (!currentReading) {
-      showTemporaryInstruction(twoRefLayout() ? NEED_REFS_INSTRUCTION : NEED_POINTS_INSTRUCTION, MESSAGE_HOLD_MS)
+      showTemporaryInstruction(NEED_POINTS_INSTRUCTION, MESSAGE_HOLD_MS)
       return
     }
     measurements.push({

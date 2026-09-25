@@ -154,3 +154,15 @@ Removed from the product, not from this history:
 Line-length memory: the taped 6 in line is stored in `localStorage` under `adapta.lineLengthIn` (every read/write in try/catch). It used to be session-only and cleared on reload. The recovered print-scale factor from the paper edge is still session-only.
 
 The measurement math is unchanged: marker positions, template geometry, homography, perspective aspect recovery, `choosePrintScale`, paper-edge checksum, axis projection, and warning thresholds. measure.js still exports the card / two-ref / custom symbols used by `tools/check-homography.js`.
+
+## 2026-09-25 — Sheet page (round 15)
+
+Phone preview of `template.html` showed only the left third of the sheet. `#pageStage` is a flex container; `.page` (11 in × 8.5 in) was a flex item with the default `flex-shrink: 1` and `overflow: hidden`, so min-width collapsed to 0. On a ~390 px screen the box shrank to the stage width while inch-positioned children stayed full size and were clipped. `fitPrintedPage()` then read that shrunken `offsetWidth`, so scale was driven by height (`scale(0.76)` instead of ~0.34). Desktop never showed it because the stage is wider than 11 in. Print CSS forces the stage to 11 in, so the printout itself was likely fine.
+
+Fix: `.page { flex: none; }` and scale from the true CSS size (`pageIn × 96` px), fitting the stage width on phones, with a height cap only as a secondary limit on large screens. `transform-origin` stays `top center`; stage height equals the scaled height.
+
+Printed-sheet copy cleanup (geometry frozen): the credit-card outline and its label are no longer drawn. Detection never used that box — it uses the four ArUco markers and, when possible, the paper edge. `templateInteriorLayoutIn()` is unchanged so the self-check still exercises the card layout box. Title is now `Adapta door-width sheet. Print on US Letter, landscape.` The bar caption is `Tape-measure this line. Enter its length on your phone.` The clip-frame caption is shortened to `All four corners of this grey frame must show on the print.`
+
+A Letter-landscape PDF lives at `adapta-door-sheet-letter.pdf` (792 × 612 pt, one page), produced by `tools/make-sheet-pdf.sh` (local `http.server` + headless Chrome `--print-to-pdf`). Screen chrome (header, download/share/print actions, instructions) is hidden by print CSS.
+
+The taped line length range on step 1 is **5.00–6.50 in** (was 5.50–6.50) so a Fit-to-page print (~94 % → ~5.64 in) and some A4 fits are accepted. Copy no longer treats “print at 100 %” as a hard requirement; the line measurement is what corrects uniform scaling. `choosePrintScale` / `recoverPrintScaleFromBar` are unchanged.

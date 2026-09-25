@@ -23,19 +23,20 @@ Do this first, while the number is still unknown, so the phone reading cannot sw
 
 Measure at least five doors if you can, including doors around 32 to 36 inches.
 
-## Print the sheet at 100 %
+## Print the sheet
 
-1. Open **Print the sheet** from the ⋯ menu, or go to `template.html`.
-2. Print the Letter landscape page at **100 % (Actual size)**. Do not use “Fit to page”. The title on the sheet must say **v2**.
-3. Check the thin grey frame. All four corners of that frame must be visible on the paper. If any corner is missing, the printer clipped the page — use a larger margin or another printer, and do not measure with that sheet.
-4. Tape-measure the **6 in line** on the printout. Write that length down. Home printers often print it slightly short, like 5.88.
+1. Open **Don't have the sheet? Print it** from step 1, or **Print the sheet** from the ⋯ menu, or go to `template.html`.
+2. Most people print from a computer. On the sheet page, tap **Download PDF** or **Send to a computer**, then print `adapta-door-sheet-letter.pdf` on US Letter paper, landscape. You can also tap **Print from this device**.
+3. Choose **Actual size** if your printer offers it. Fit to page is OK: tape-measure the line on the printout and enter that length in step 1. That corrects shrinking (Fit to page is often about 94 %, so the line reads about 5.64 in).
+4. Check the thin grey frame. All four corners of that frame must be visible on the paper. If any corner is missing, the printer clipped the page — use a larger margin or another printer, and do not measure with that sheet.
+5. Tape-measure the line on the printout. Write that length down. Home printers often print it slightly short, like 5.88. The page accepts 5.00 to 6.50 in.
 
 If you cannot print, you can use a blank US Letter sheet (8.5 × 11 in) instead. The printed sheet is the measurement to try first.
 
 ## Step 1 — Your sheet
 
 1. Open the measuring page. The camera does not start yet.
-2. For the printed sheet: the line-length field starts empty. Type the taped line length (between 5.5 and 6.5 in), or tick **It measures exactly 6 in**. The Open camera button stays off until you do one of those, or a remembered length from last time is filled in. Ticking the checkbox or typing 6.00 counts as a tape measurement of 6 in.
+2. For the printed sheet: the line-length field starts empty. Type the taped line length (between 5 and 6.5 in), or tick **It measures exactly 6 in**. The Open camera button stays off until you do one of those, or a remembered length from last time is filled in. Ticking the checkbox or typing 6.00 counts as a tape measurement of 6 in.
 3. If you do not have the sheet, tap **Using plain printer paper instead** and tick **It’s US Letter, 8.5 × 11 in**.
 4. Tap **Open camera** and allow the camera if asked.
 
