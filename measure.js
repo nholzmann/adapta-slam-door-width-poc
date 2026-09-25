@@ -35,7 +35,6 @@ const FIT_RMS_WARN_MM = 3
 const SCALE_DRIFT_WARN_TIGHT = 0.05
 const SCALE_DRIFT_WARN_LOOSE = 0.15
 const SCALE_DRIFT_LOOSE_PX = 400
-const LINES_ANGLE_WARN_DEG = 3
 const SCALE_RATIO_WARN = 1.3
 const MARKER_RMS_WARN_MM = 1.5
 const PRINT_SCALE_AGREE = 0.01
@@ -1936,15 +1935,8 @@ function bootReferenceApp() {
   let captureGamma = null
   let cardCorners = null
   let originalCorners = null
-  let refACorners = null
-  let refBCorners = null
-  let refADetect = 'manual'
-  let refBDetect = 'manual'
-  let refAStrategy = 'manual'
-  let refBStrategy = 'manual'
   let pendingUsesTemplate = false
   let pendingAutoMarkers = 'n'
-  let refAUsesTemplate = false
   let adjustNoun = null
   let readingUsesTemplate = false
   let readingAutoMarkers = 'n'
@@ -2545,8 +2537,6 @@ function bootReferenceApp() {
       syncChrome()
     }, holdMs)
   }
-
-  function positionChrome() {}
 
   function setStatusOpen(open) {
     void open
@@ -3981,7 +3971,7 @@ function bootReferenceApp() {
     if (captureTemplateMissed) {
       pendingUsesTemplate = false
       pendingAutoMarkers = 'n'
-      if (!refAUsesTemplate) applyTemplateDetection(null)
+      applyTemplateDetection(null)
       adjustNoun = 'sheet'
       logDiagnostic('markers: capture miss — tap-seeded Letter search')
       placePlainQuad(tapX, tapY, LETTER_REF, null)
@@ -4025,8 +4015,7 @@ function bootReferenceApp() {
     }
     pendingUsesTemplate = false
     pendingAutoMarkers = 'n'
-    // Keep a template scale already recovered for the other reference.
-    if (!refAUsesTemplate) applyTemplateDetection(null)
+    applyTemplateDetection(null)
     if (referenceKind === 'template') {
       adjustNoun = 'sheet'
       logDiagnostic('markers: no markers found — treating as plain Letter paper')
@@ -4230,7 +4219,6 @@ function bootReferenceApp() {
   function clearMarkerFlags() {
     pendingUsesTemplate = false
     pendingAutoMarkers = 'n'
-    refAUsesTemplate = false
     adjustNoun = null
     readingUsesTemplate = false
     readingAutoMarkers = 'n'
@@ -4242,12 +4230,6 @@ function bootReferenceApp() {
   function clearCaptureGeometry() {
     cardCorners = null
     originalCorners = null
-    refACorners = null
-    refBCorners = null
-    refADetect = 'manual'
-    refBDetect = 'manual'
-    refAStrategy = 'manual'
-    refBStrategy = 'manual'
     detectKind = 'manual'
     detectStrategy = 'manual'
     homography = null

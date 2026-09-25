@@ -9,20 +9,30 @@ function arucoMipBits(id) {
 }
 
 // Outer black square is the full 2.00 in SVG (8×8 cells, 1-cell border).
+// White field, one even-odd border path, one path for every 0-bit cell so
+// adjacent whites (and blacks) do not leave anti-aliased hairlines.
 function markerSvgMarkup(id, sizeIn) {
   const bits = arucoMipBits(id)
   const cells = 8
   const cell = sizeIn / cells
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sizeIn}in" height="${sizeIn}in" viewBox="0 0 ${sizeIn} ${sizeIn}" aria-label="ArUco MIP 36h12 id ${id}">`
-  svg += `<rect x="0" y="0" width="${sizeIn}" height="${sizeIn}" fill="#000"/>`
-  if (bits) {
+  const inner = sizeIn - cell
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sizeIn}in" height="${sizeIn}in" viewBox="0 0 ${sizeIn} ${sizeIn}" shape-rendering="crispEdges" aria-label="ArUco MIP 36h12 id ${id}">`
+  if (!bits) {
+    svg += `<rect x="0" y="0" width="${sizeIn}" height="${sizeIn}" fill="#000"/>`
+  } else {
+    svg += `<rect x="0" y="0" width="${sizeIn}" height="${sizeIn}" fill="#fff"/>`
+    svg += `<path fill="#000" fill-rule="evenodd" d="M0 0H${sizeIn}V${sizeIn}H0Z M${cell} ${cell}H${inner}V${inner}H${cell}Z"/>`
+    let d = ''
     for (let y = 0; y < 6; y++) {
       for (let x = 0; x < 6; x++) {
-        if (bits[y * 6 + x] === '1') {
-          svg += `<rect x="${(x + 1) * cell}" y="${(y + 1) * cell}" width="${cell}" height="${cell}" fill="#fff"/>`
+        if (bits[y * 6 + x] === '0') {
+          const x0 = (x + 1) * cell
+          const y0 = (y + 1) * cell
+          d += `M${x0} ${y0}h${cell}v${cell}h${-cell}z`
         }
       }
     }
+    if (d) svg += `<path fill="#000" d="${d}"/>`
   }
   svg += '</svg>'
   return svg
@@ -131,44 +141,67 @@ function renderTemplatePage() {
   fitPrintedPage()
 }
 
-function shareIsAbort(error) {
-  return !!(error && (error.name === 'AbortError' || error.name === 'NotAllowedError'))
+let prefetchedPdfFile = null
+
+function prefetchSheetPdf() {
+  const pdfUrl = new URL('adapta-door-sheet-letter.pdf', window.location.href).href
+  fetch(pdfUrl).then((res) => {
+    if (!res.ok) return null
+    return res.blob()
+  }).then((blob) => {
+    if (!blob) return
+    prefetchedPdfFile = new File([blob], 'adapta-door-sheet-letter.pdf', {type: 'application/pdf'})
+  }).catch(() => {})
+}
+
+function setShareMessage(text) {
+  const el = document.getElementById('shareMessage')
+  if (!el) return
+  if (!text) {
+    el.textContent = ''
+    el.hidden = true
+    return
+  }
+  el.textContent = text
+  el.hidden = false
+}
+
+function canSharePdfFile(file) {
+  if (!file) return false
+  try {
+    return !!(navigator.canShare && navigator.canShare({files: [file]}))
+  } catch (err) {
+    return false
+  }
 }
 
 function shareSheetPdf() {
-  const pdfUrl = new URL('adapta-door-sheet-letter.pdf', window.location.href).href
-  const fallback = () => navigator.share({
+  setShareMessage('')
+  const urlShare = {
     title: 'Adapta door-width sheet',
     url: window.location.href,
-  })
-  const tryFiles = fetch(pdfUrl).then((res) => {
-    if (!res.ok) throw new Error('pdf missing')
-    return res.blob()
-  }).then((blob) => {
-    const file = new File([blob], 'adapta-door-sheet-letter.pdf', {type: 'application/pdf'})
-    let canFiles = false
-    try {
-      canFiles = !!(navigator.canShare && navigator.canShare({files: [file]}))
-    } catch (err) {
-      canFiles = false
+  }
+  const useFiles = canSharePdfFile(prefetchedPdfFile)
+  const pending = useFiles
+    ? navigator.share({title: 'Adapta door-width sheet', files: [prefetchedPdfFile]})
+    : navigator.share(urlShare)
+  return Promise.resolve(pending).catch((err) => {
+    if (err && err.name === 'AbortError') return
+    if (!useFiles) {
+      setShareMessage('Sharing isn\'t available here. Use Download PDF instead.')
+      return
     }
-    if (!canFiles) return fallback()
-    return navigator.share({
-      title: 'Adapta door-width sheet',
-      files: [file],
+    return Promise.resolve(navigator.share(urlShare)).catch((err2) => {
+      if (err2 && err2.name === 'AbortError') return
+      setShareMessage('Sharing isn\'t available here. Use Download PDF instead.')
     })
-  })
-  return tryFiles.catch((err) => {
-    if (shareIsAbort(err)) return
-    return fallback()
-  }).catch((err) => {
-    if (shareIsAbort(err)) return
   })
 }
 
 function bootTemplatePage() {
   if (!document.getElementById('page')) return
   renderTemplatePage()
+  prefetchSheetPdf()
   const printButton = document.getElementById('printButton')
   if (printButton) printButton.addEventListener('click', () => window.print())
   const shareButton = document.getElementById('shareButton')

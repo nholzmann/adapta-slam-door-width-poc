@@ -90,6 +90,7 @@
     }
 
     #pageStage {
+      box-sizing: content-box;
       display: flex;
       justify-content: center;
       padding: 16px 12px 8px;
@@ -246,6 +247,16 @@
       padding: 8px max(20px, env(safe-area-inset-right, 0px)) 8px max(20px, env(safe-area-inset-left, 0px));
     }
 
+    #shareMessage {
+      margin: 0.15rem 0 0;
+      color: #B4461F;
+      font-size: 0.875rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      #shareMessage { color: #F08A5D; }
+    }
+
     #instructions {
       max-width: 430px;
       margin: 0 auto;
@@ -323,6 +334,7 @@
     <a id="downloadPdf" class="button-primary" href="adapta-door-sheet-letter.pdf" download>Download PDF</a>
     <button type="button" id="shareButton" class="button-secondary">Send to a computer</button>
     <button type="button" id="printButton" class="button-text">Print from this device</button>
+    <p id="shareMessage" hidden></p>
   </div>
   <div id="instructions">
     <h1>Print the sheet</h1>
