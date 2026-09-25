@@ -26,27 +26,11 @@
       color: #f4f1ea;
     }
 
-    #tabBar {
-      display: flex;
-      gap: 4px;
-    }
-
-    #tabBar a {
-      display: flex;
-      align-items: center;
-      height: 28px;
-      padding: 0 10px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.1);
-      color: #efe6d4;
-      text-decoration: none;
-      font-weight: 700;
-      font-size: 0.75rem;
-    }
-
-    #tabBar a[aria-current="page"] {
-      color: #1a1714;
-      background: #ffd27a;
+    #measureLink {
+      color: #f4f1ea;
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-underline-offset: 3px;
     }
 
     #printButton {
@@ -221,16 +205,12 @@
   <script>
     window.JSARUCO = {CV: window.CV, AR: window.AR}
   </script>
-  <script src="reference.js" defer></script>
+  <script src="measure.js" defer></script>
   <script src="template.js" defer></script>
 </head>
 <body>
   <header id="screenBar">
-    <nav id="tabBar">
-      <a href="index.html">SLAM</a>
-      <a href="reference.html">Reference</a>
-      <a href="template.html" aria-current="page">Template</a>
-    </nav>
+    <a id="measureLink" href="index.html">Back to measuring</a>
     <button type="button" id="printButton">Print</button>
   </header>
   <div id="pageStage">
@@ -238,8 +218,8 @@
   </div>
   <div id="instructions">
     <h1>Print this sheet at 100 %</h1>
-    <p>Use US Letter, landscape, <strong>Actual size</strong>. Do not use “Fit to page”. After printing, lay a credit card inside the centre outline — if the edges do not line up, the print is scaled. Check the 6.00 in bar with a tape measure and, if it is not 6.00, enter that length in the Reference tab’s “Bar measured (in)” field.</p>
-    <p>On the Reference tab choose <strong>Printed template (Letter) — best</strong>, lay this sheet on the threshold line (any orientation), Capture, and tap the sheet.</p>
+    <p>Use US Letter, landscape, <strong>Actual size</strong>. Do not use “Fit to page”. After printing, tape-measure the 6 in line and enter that length in step 1 of the measuring page. Home printers often print it slightly short, like 5.88.</p>
+    <p>Then open the measuring page, confirm the line length, lay this sheet on the floor between the door jambs, take a photo, and tap the two sides.</p>
   </div>
 </body>
 </html>

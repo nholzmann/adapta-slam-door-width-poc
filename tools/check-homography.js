@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Synthetic self-check for reference.js planar math. No OpenCV, no DOM.
+// Synthetic self-check for measure.js planar math. No OpenCV, no DOM.
 // Card case uses a mild perspective. Letter case is a 45° pitch from nadir.
 
 const path = require('path')
-const ref = require(path.join(__dirname, '..', 'reference.js'))
+const ref = require(path.join(__dirname, '..', 'measure.js'))
 
 function fail(message) {
   console.error(`FAIL: ${message}`)

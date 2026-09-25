@@ -2,330 +2,736 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>SLAM Door-Width POC</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#F5F7F7">
+  <title>Measure a doorway — Adapta</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;800&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --ink: #16324F;
+      --surface: #F5F7F7;
+      --surface-raised: #FFFFFF;
+      --tape: #FFCB2E;
+      --found: #1F8A5B;
+      --caution: #B4461F;
+      --muted: #5B6B7A;
+      --font: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+      --shadow-sheet: 0 -8px 28px rgba(0, 0, 0, 0.18);
+      --focus: 0 0 0 3px var(--surface-raised), 0 0 0 5px var(--ink);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #E8EEF3;
+        --surface: #14202C;
+        --surface-raised: #1C2B3A;
+        --caution: #F08A5D;
+        --muted: #9AABBA;
+        --shadow-sheet: 0 -8px 28px rgba(0, 0, 0, 0.45);
+        --focus: 0 0 0 3px var(--surface-raised), 0 0 0 5px var(--tape);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
     html, body {
       margin: 0;
-      height: 100%;
-      background: #000;
+      min-height: 100%;
+      background: var(--surface);
+      color: var(--ink);
+      font-family: var(--font);
+      font-size: 1.0625rem;
+      font-weight: 400;
+      line-height: 1.45;
+    }
+
+    body {
+      min-height: 100dvh;
+    }
+
+    body.is-step-2,
+    body.is-step-3 {
       overflow: hidden;
-      touch-action: none;
+      height: 100dvh;
+      background: #000;
     }
 
-    /* FullWindowCanvas resizes the drawing buffer and does not set z-index.
-       z-index 0 keeps the feed under the overlay. */
-    #camerafeed {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      display: block;
-      z-index: 0;
-      touch-action: none;
-    }
-
-    /* Taps fall through, including to the loading-layer button, until .is-live.
-       z-index 900 sits above the XRExtras loading layer (800) so the status line stays visible. */
-    #overlay {
-      display: flex;
-      position: absolute;
-      inset: 0;
-      z-index: 900;
-      flex-direction: column;
-      pointer-events: none;
-      color: #f4f1ea;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      user-select: none;
-    }
-
-    /* Always tappable so testers can leave SLAM without waiting for the
-       camera. 44 px at the top stays clear of the XRExtras start button. */
-    #tabBar {
-      display: flex;
-      flex: 0 0 44px;
-      height: 44px;
-      pointer-events: auto;
-      background: rgba(8, 10, 12, 0.88);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    }
-
-    #tabBar a {
-      flex: 1 1 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #efe6d4;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.95rem;
-    }
-
-    #tabBar a[aria-current="page"] {
-      color: #f4f1ea;
-      background: rgba(255, 210, 122, 0.16);
-      box-shadow: inset 0 -3px 0 #ffd27a;
-    }
-
-    #statusBar {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 0.75rem;
-      padding: 0.6rem 0.75rem;
-      background: rgba(8, 10, 12, 0.72);
-      font-size: 0.95rem;
-      font-variant-numeric: tabular-nums;
-    }
-
-    #trackingStatus,
-    #cameraHeight,
-    #instructionText,
-    #resultSecondary,
-    #calibrationSummary,
-    #measurementSummary,
-    #diagnosticsSummary {
+    h1 {
       margin: 0;
+      font-size: 1.75rem;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: 0;
     }
 
-    #trackingStatus {
-      font-weight: 700;
-      color: #ffb020;
-    }
-
-    #trackingStatus.is-normal {
-      color: #3ddc6e;
-    }
-
-    #cameraHeight {
-      white-space: nowrap;
-    }
-
-    #instructionText {
-      margin: 0.45rem 0.75rem 0;
-      padding: 0.55rem 0.7rem;
-      background: rgba(8, 10, 12, 0.62);
-      border-radius: 8px;
-      font-size: 1.05rem;
-      font-weight: 600;
-      line-height: 1.35;
-    }
-
-    #instructionText.is-flashing {
-      animation: instruction-flash 0.35s ease-in-out 3;
-    }
-
-    @keyframes instruction-flash {
-      50% { background: #8a4b00; }
-    }
-
-    #readout {
-      margin-top: auto;
-      padding: 0.75rem 0.75rem 0.35rem;
-      background: linear-gradient(transparent, rgba(8, 10, 12, 0.78) 30%);
-    }
-
-    #resultInches {
-      display: block;
-      font-size: clamp(3rem, 14vw, 4.4rem);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 0.95;
-      font-variant-numeric: tabular-nums;
-    }
-
-    #resultInches:empty,
-    #resultCentimeters:empty,
-    #resultRaw:empty,
-    #resultSecondary:empty {
-      display: none;
-    }
-
-    #resultCentimeters {
-      display: block;
-      margin-top: 0.2rem;
-      font-size: 1.2rem;
-      font-variant-numeric: tabular-nums;
-    }
-
-    #resultRaw {
-      display: block;
-      margin-top: 0.15rem;
-      font-size: 0.95rem;
-      color: #efe6d4;
-      font-variant-numeric: tabular-nums;
-    }
-
-    #resultSecondary {
-      margin-top: 0.35rem;
-      font-size: 0.95rem;
-      color: #efe6d4;
-    }
-
-    #controls {
-      display: flex;
-      flex-wrap: nowrap;
-      gap: 0.35rem;
-      margin-top: 0.75rem;
+    button,
+    input,
+    select,
+    textarea,
+    a {
+      font: inherit;
+      font-family: inherit;
     }
 
     button {
       appearance: none;
       border: 0;
-      border-radius: 999px;
-      background: #f4f1ea;
-      color: #1a1714;
-      font: 600 0.9rem/1.1 inherit;
-      padding: 0 0.4rem;
-      min-height: 52px;
+      background: none;
+      color: inherit;
+      cursor: pointer;
     }
 
-    #controls button {
-      display: flex;
-      flex: 1 1 0;
-      flex-wrap: wrap;
+    button:focus-visible,
+    input:focus-visible,
+    a:focus-visible {
+      outline: none;
+      box-shadow: var(--focus);
+    }
+
+    [hidden] { display: none !important; }
+
+    .icon-button {
+      display: inline-flex;
       align-items: center;
-      align-content: center;
       justify-content: center;
-      min-width: 0;
-      text-align: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      color: var(--ink);
+      font-size: 1.5rem;
+      line-height: 1;
+      position: relative;
     }
 
-    /* A <br> is its own flex item. Full-width and zero height stacks the two
-       label lines without inserting a blank line between them. */
-    #controls button br {
-      flex-basis: 100%;
-      width: 0;
-      height: 0;
+    .icon-button-on-photo {
+      color: #fff;
+      background: rgba(0, 0, 0, 0.45);
+    }
+
+    .menu-badge {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: var(--tape);
+      color: #16324F;
+      font-size: 0.6875rem;
+      font-weight: 800;
+      line-height: 18px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .menu-badge:empty { display: none; }
+
+    .button-primary,
+    .button-secondary,
+    .button-text {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 52px;
+      padding: 0 1rem;
+      border-radius: 14px;
+      font-size: 1.0625rem;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .button-primary {
+      background: var(--ink);
+      color: #fff;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .button-primary {
+        background: var(--tape);
+        color: #16324F;
+      }
+    }
+
+    .button-primary:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .button-secondary {
+      background: var(--surface-raised);
+      color: var(--ink);
+      box-shadow: inset 0 0 0 1px rgba(22, 50, 79, 0.18);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .button-secondary {
+        box-shadow: inset 0 0 0 1px rgba(232, 238, 243, 0.16);
+      }
+    }
+
+    .button-text {
+      min-height: 44px;
+      color: var(--ink);
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      background: transparent;
+    }
+
+    .quiet-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 0.2rem;
+      color: var(--muted);
+      font-size: 0.875rem;
+      font-weight: 400;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      background: none;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .quiet {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    .error {
+      margin: 0.35rem 0 0;
+      color: var(--caution);
+      font-size: 0.875rem;
+    }
+
+    /* —— Step 1 —— */
+    #stepSheet {
+      height: 100dvh;
+      min-height: 100dvh;
+      overflow: auto;
+      padding: env(safe-area-inset-top, 0px) max(20px, env(safe-area-inset-right, 0px)) 0 max(20px, env(safe-area-inset-left, 0px));
+      display: flex;
+      flex-direction: column;
+      max-width: 430px;
+      margin: 0 auto;
+    }
+
+    .step1-bar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 52px;
+      margin: 0 -8px 4px;
+    }
+
+    .step-kicker {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 0.875rem;
+    }
+
+    #stepSheet h1 { margin-bottom: 1.1rem; }
+
+    .sheet-card {
+      background: var(--surface-raised);
+      border-radius: 20px;
+      padding: 1.1rem 1.15rem 1.2rem;
+    }
+
+    .sheet-preview {
+      display: block;
+      width: 100%;
+      max-width: 280px;
+      margin: 0 auto 1rem;
+      height: auto;
+    }
+
+    .sheet-card h2 {
+      margin: 0 0 0.35rem;
+      font-size: 1.125rem;
+      font-weight: 800;
+    }
+
+    .sheet-card p {
+      margin: 0 0 0.9rem;
+    }
+
+    .line-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem;
+    }
+
+    .line-field-row {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+    }
+
+    #lineLengthInput {
+      width: 6.2rem;
+      min-height: 52px;
+      padding: 0 0.7rem;
+      border: 0;
+      border-radius: 14px;
+      background: var(--surface);
+      color: var(--ink);
+      font-family: var(--font), system-ui, sans-serif;
+      font-size: 1.25rem;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      box-shadow: inset 0 0 0 1px rgba(22, 50, 79, 0.16);
+    }
+
+    #lineLengthInput::placeholder {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      #lineLengthInput {
+        box-shadow: inset 0 0 0 1px rgba(232, 238, 243, 0.16);
+      }
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 44px;
+      margin: 0.15rem 0 0.55rem;
+      font-size: 1.0625rem;
+    }
+
+    .check-row input {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      accent-color: #16324F;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .check-row input {
+        accent-color: var(--tape);
+      }
+    }
+
+    .print-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      margin: 0.2rem 0 0;
+      color: var(--ink);
+      font-weight: 600;
+      text-underline-offset: 3px;
+    }
+
+    .swap-wrap {
+      display: flex;
+      justify-content: center;
+      margin: 0.35rem 0 1.1rem;
+    }
+
+    .step1-cta {
+      position: sticky;
+      bottom: 0;
+      margin-top: auto;
+      padding: 12px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+      background: var(--surface);
+    }
+
+    /* —— Camera / photo —— */
+    #measureRoot {
+      position: fixed;
+      inset: 0;
+      animation: step-in 180ms ease;
+    }
+
+    @keyframes step-in {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    #stage {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      background: #000;
+      touch-action: none;
+      transform: translateZ(0);
+    }
+
+    #preview,
+    #still,
+    #marks {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    #preview,
+    #still {
+      object-fit: contain;
+      background: #000;
+    }
+
+    #still { display: none; }
+
+    #stage.is-still #preview { display: none; }
+    #stage.is-still #still { display: block; }
+
+    #marks {
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    #topBar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 4;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: calc(6px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) 8px max(10px, env(safe-area-inset-left, 0px));
+      pointer-events: none;
+    }
+
+    #topBar > * { pointer-events: auto; }
+
+    #stepPill {
+      flex: 1 1 auto;
+      min-width: 0;
+      margin: 0;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 600;
+      line-height: 1.25;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      white-space: nowrap;
       overflow: hidden;
     }
 
-    button:active {
-      transform: translateY(1px);
+    #stepPillStep,
+    #stepPillDetail {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
-    #calibrationPanel,
+    #bottomStack {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 4;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    #sheetStatus {
+      margin: 0 0 10px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 0.875rem;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    #sheetStatus.is-found {
+      background: var(--found);
+      color: #fff;
+    }
+
+    #shutterButton {
+      width: 72px;
+      height: 72px;
+      margin: 0 0 12px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 4px var(--tape), 0 0 0 6px #000;
+      pointer-events: auto;
+    }
+
+    #shutterButton:disabled {
+      opacity: 0.45;
+    }
+
+    #readout {
+      width: 100%;
+      max-width: 430px;
+      margin: 0 auto;
+      padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 20px 20px 0 0;
+      box-shadow: var(--shadow-sheet);
+      pointer-events: auto;
+    }
+
+    #modeToggle {
+      display: flex;
+      gap: 4px;
+      margin: 0 0 10px;
+      padding: 4px;
+      border-radius: 14px;
+      background: var(--surface-raised);
+    }
+
+    #modeToggle button {
+      flex: 1 1 0;
+      min-height: 44px;
+      border-radius: 12px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    #modeToggle button[aria-pressed="true"] {
+      background: var(--ink);
+      color: #fff;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      #modeToggle button[aria-pressed="true"] {
+        background: var(--tape);
+        color: #16324F;
+      }
+    }
+
+    #instructionText {
+      margin: 0;
+      font-size: 1.0625rem;
+      font-weight: 400;
+    }
+
+    #resultBlock {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    #resultInches {
+      font-size: 3.5rem;
+      font-weight: 800;
+      line-height: 1.05;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+    }
+
+    #resultExact {
+      display: flex;
+      gap: 1rem;
+      margin: 0;
+      font-size: 0.875rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+
+    #resultScale {
+      margin: 0.15rem 0 0;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    .caution-block {
+      display: flex;
+      gap: 0.55rem;
+      align-items: flex-start;
+      margin: 0.7rem 0 0;
+      padding: 0.7rem 0.75rem;
+      border-radius: 14px;
+      background: rgba(180, 70, 31, 0.12);
+      color: var(--caution);
+      font-size: 0.875rem;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+
+    .caution-block.is-loud {
+      background: var(--caution);
+      color: #fff;
+    }
+
+    .caution-icon {
+      flex: 0 0 auto;
+      font-size: 1.1rem;
+      line-height: 1.2;
+    }
+
+    #resultActions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    body.is-dragging #readout,
+    body.is-dragging #topBar,
+    body.is-dragging #sheetStatus,
+    body.is-dragging #shutterButton {
+      visibility: hidden;
+    }
+
+    /* —— More menu —— */
+    #moreBackdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 8;
+      background: rgba(0, 0, 0, 0.45);
+    }
+
+    #moreMenu {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 9;
+      max-height: min(78vh, 640px);
+      max-width: 430px;
+      margin: 0 auto;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 20px 20px 0 0;
+      box-shadow: var(--shadow-sheet);
+    }
+
+    .menu-grab {
+      width: 36px;
+      height: 4px;
+      margin: 4px auto 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.22);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .menu-grab { background: rgba(255, 255, 255, 0.28); }
+    }
+
+    .menu-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-height: 52px;
+      padding: 0 4px;
+      border-radius: 14px;
+      font-size: 1.0625rem;
+      font-weight: 600;
+      text-align: left;
+      text-decoration: none;
+      color: var(--ink);
+    }
+
+    .menu-panel {
+      margin: 0 0 10px;
+      padding: 0.2rem 0 0.4rem;
+    }
+
     #measurementList,
     #diagnosticsList {
-      margin-top: 0.5rem;
-      background: rgba(8, 10, 12, 0.55);
-      border-radius: 8px;
-      font-size: 0.85rem;
-      line-height: 1.35;
-      user-select: text;
+      margin: 0;
     }
 
-    /* The page disables panning so floor taps do not scroll. This field still
-       has to take a tap and open the keyboard. */
-    #calibrationPanel {
-      touch-action: manipulation;
-    }
-
-    #calibrationSummary,
     #measurementSummary,
     #diagnosticsSummary {
-      padding: 0.5rem 0.65rem;
       font-weight: 600;
       cursor: pointer;
     }
 
-    #calibrationFields {
+    .measurement-row,
+    .measurement-empty,
+    .diagnostic-row {
+      margin: 0;
+      padding: 0.45rem 0;
+      border-top: 1px solid rgba(22, 50, 79, 0.12);
+      font-size: 0.875rem;
+    }
+
+    .measurement-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.7rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .measurement-row,
+      .measurement-empty,
+      .diagnostic-row {
+        border-top-color: rgba(232, 238, 243, 0.12);
+      }
+    }
+
+    #diagnosticsPanel {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.875rem;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      user-select: text;
+    }
+
+    #statusLines {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin: 0 0 0.6rem;
+      font-size: 0.875rem;
+      color: var(--muted);
+    }
+
+    #statusLines p { margin: 0; }
+
+    #tiltReadout {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       gap: 0.4rem;
-      padding: 0.45rem 0.65rem 0.35rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
     }
 
-    #calibrationFields label {
-      flex: 1 0 100%;
+    #enableTiltButton {
+      min-height: 44px;
+      padding: 0 0.8rem;
+      border-radius: 14px;
+      background: var(--surface-raised);
       font-weight: 600;
     }
 
-    #actualHeightInput {
-      box-sizing: border-box;
-      flex: 1 1 6rem;
-      min-width: 0;
-      min-height: 44px;
-      border: 0;
-      border-radius: 8px;
-      padding: 0 0.6rem;
-      background: #f4f1ea;
-      color: #1a1714;
-      font: 600 1rem/1.2 inherit;
-    }
-
-    #applyCalibrationButton {
-      flex: 0 0 auto;
-      min-height: 44px;
-      padding: 0 0.9rem;
-    }
-
-    #calibrationHint {
-      margin: 0;
-      padding: 0 0.65rem 0.55rem;
-      color: #e6e0d4;
-    }
-
-    #measurementRows {
-      max-height: 26vh;
-      overflow: auto;
-    }
-
-    .measurement-row,
-    .measurement-empty {
-      margin: 0;
-      padding: 0.4rem 0.65rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
-    }
-
     #credits {
-      padding: 0.4rem 0.75rem 0.55rem;
-      background: rgba(8, 10, 12, 0.88);
-      color: #e6e0d6;
-      font-size: max(11px, 0.72rem);
-      line-height: 1.35;
-      user-select: text;
-    }
-
-    #credits a {
-      color: #ffd27a;
-    }
-
-    /* Loading-layer taps must pass through until the camera runs. */
-    #overlay.is-live #controls,
-    #overlay.is-live #calibrationPanel,
-    #overlay.is-live #measurementList,
-    #overlay.is-live #diagnosticsList,
-    #overlay.is-live #credits a {
-      pointer-events: auto;
-    }
-
-    /* The phone has no console we can read. Closed until the tester opens it. */
-    #diagnosticsPanel {
-      max-height: 30vh;
-      overflow: auto;
-      -webkit-overflow-scrolling: touch;
-      margin: 0;
-      padding: 0.4rem 0.65rem;
-      border-top: 1px solid rgba(255, 255, 255, 0.12);
-      color: #d7d2c8;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.72rem;
-      line-height: 1.35;
-      user-select: text;
-      overflow-wrap: anywhere;
-    }
-
-    .diagnostic-row {
-      margin: 0;
+      margin: 0.8rem 0 0;
+      color: var(--muted);
+      font-size: 0.875rem;
     }
 
     .clipboard-fallback {
       position: fixed;
       left: 0;
       top: 0;
+      z-index: 10;
       width: 2em;
       height: 2em;
       margin: 0;
@@ -334,76 +740,185 @@
       opacity: 0;
       font-size: 16px;
     }
-  </style>
 
-  <!-- three.js r160+ is ESM-only. The engine reads the global window.THREE. -->
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.min.js"
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
       }
     }
-  </script>
-  <script type="module">
-    import * as THREE from 'three'
-    window.THREE = {...THREE}
-  </script>
 
-  <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js"></script>
-  <!-- MIT coaching overlay: animated forward/back prompt until tracking is NORMAL. -->
-  <script src="https://cdn.jsdelivr.net/npm/@8thwall/coaching-overlay@1/dist/coaching-overlay.js" crossorigin="anonymous"></script>
-  <!-- File name must stay xr.js: the binary finds itself by that suffix. data-preload-chunks pulls in SLAM. -->
-  <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
-  <script src="app.js"></script>
+    @media (min-width: 720px) and (orientation: landscape) {
+      #readout { max-width: 420px; margin-left: auto; margin-right: 16px; }
+      #moreMenu { max-width: 420px; margin-right: 16px; margin-left: auto; }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/dictionaries/aruco_mip_36h12.js"></script>
+  <script>
+    window.JSARUCO = {CV: window.CV, AR: window.AR}
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4/dist/opencv.min.js" async></script>
+  <script src="measure.js" defer></script>
 </head>
-<body>
-  <canvas id="camerafeed"></canvas>
-
-  <div id="overlay">
-    <nav id="tabBar">
-      <a href="index.html" aria-current="page">SLAM</a>
-      <a href="reference.html">Reference</a>
-    </nav>
-    <div id="statusBar">
-      <p id="trackingStatus">Starting…</p>
-      <p id="cameraHeight">— m / — in</p>
+<body class="is-step-1">
+  <section id="stepSheet">
+    <div class="step1-bar">
+      <button type="button" id="moreButton" class="icon-button" aria-haspopup="dialog" aria-controls="moreMenu" aria-label="More">
+        ⋯
+        <span id="menuBadge" class="menu-badge"></span>
+      </button>
     </div>
-    <p id="instructionText">Point at the floor, then push the phone forward and pull it back until tracking is NORMAL</p>
+    <p class="step-kicker">Step 1 of 3</p>
+    <h1>Measure a doorway</h1>
 
-    <div id="readout">
-      <div id="resultPrimary">
-        <span id="resultInches"></span>
-        <span id="resultCentimeters"></span>
-        <span id="resultRaw"></span>
-      </div>
-      <p id="resultSecondary"></p>
-      <div id="controls">
-        <button type="button" id="resetButton">Reset</button>
-        <button type="button" id="recenterButton">Recenter</button>
-        <button type="button" id="logButton">Save<br>to list</button>
-        <button type="button" id="copyResultsButton">Copy<br>results</button>
-      </div>
-      <details id="calibrationPanel">
-        <summary id="calibrationSummary">Calibration: none</summary>
-        <div id="calibrationFields">
-          <label for="actualHeightInput">Actual phone height (in)</label>
-          <input id="actualHeightInput" type="number" inputmode="decimal" step="0.1" min="12" max="80" enterkeyhint="done" autocomplete="off">
-          <button type="button" id="applyCalibrationButton">Apply</button>
+    <div id="templateCard" class="sheet-card">
+      <svg class="sheet-preview" viewBox="0 0 220 170" role="img" aria-label="Printed Adapta sheet with four corner markers and a highlighted 6 inch line">
+        <rect x="8" y="8" width="204" height="154" rx="6" fill="#fff" stroke="#16324F" stroke-width="2"/>
+        <rect x="18" y="18" width="36" height="36" fill="#16324F"/>
+        <rect x="24" y="24" width="8" height="8" fill="#fff"/>
+        <rect x="40" y="24" width="8" height="8" fill="#fff"/>
+        <rect x="32" y="32" width="8" height="8" fill="#fff"/>
+        <rect x="24" y="40" width="8" height="8" fill="#fff"/>
+        <rect x="40" y="40" width="8" height="8" fill="#fff"/>
+        <rect x="166" y="18" width="36" height="36" fill="#16324F"/>
+        <rect x="172" y="24" width="8" height="8" fill="#fff"/>
+        <rect x="188" y="24" width="8" height="8" fill="#fff"/>
+        <rect x="180" y="32" width="8" height="8" fill="#fff"/>
+        <rect x="172" y="40" width="8" height="8" fill="#fff"/>
+        <rect x="188" y="40" width="8" height="8" fill="#fff"/>
+        <rect x="166" y="116" width="36" height="36" fill="#16324F"/>
+        <rect x="172" y="122" width="8" height="8" fill="#fff"/>
+        <rect x="188" y="122" width="8" height="8" fill="#fff"/>
+        <rect x="180" y="130" width="8" height="8" fill="#fff"/>
+        <rect x="172" y="138" width="8" height="8" fill="#fff"/>
+        <rect x="188" y="138" width="8" height="8" fill="#fff"/>
+        <rect x="18" y="116" width="36" height="36" fill="#16324F"/>
+        <rect x="24" y="122" width="8" height="8" fill="#fff"/>
+        <rect x="40" y="122" width="8" height="8" fill="#fff"/>
+        <rect x="32" y="130" width="8" height="8" fill="#fff"/>
+        <rect x="24" y="138" width="8" height="8" fill="#fff"/>
+        <rect x="40" y="138" width="8" height="8" fill="#fff"/>
+        <rect x="58" y="88" width="104" height="8" rx="2" fill="#FFCB2E"/>
+        <rect x="58" y="86" width="2" height="12" fill="#16324F"/>
+        <rect x="160" y="86" width="2" height="12" fill="#16324F"/>
+      </svg>
+      <h2>Printed Adapta sheet</h2>
+      <p>Tape-measure the long line printed on the sheet.</p>
+      <label class="line-field">Line length
+        <span class="line-field-row">
+          <input id="lineLengthInput" type="text" inputmode="decimal" autocomplete="off" value="" placeholder="6.00" aria-describedby="lineRememberedNote lineRangeMessage">
+          <span>in</span>
+        </span>
+      </label>
+      <p id="lineRememberedNote" class="quiet" hidden>Remembered from last time</p>
+      <p id="lineRangeMessage" class="error" hidden>Enter the length in inches, between 5.5 and 6.5. Home printers often print it slightly short, like 5.88.</p>
+      <label class="check-row">
+        <input id="lineExactCheck" type="checkbox">
+        <span>It measures exactly 6 in</span>
+      </label>
+      <a class="print-link" href="template.html" target="_blank" rel="noopener">Don't have the sheet? Print it</a>
+    </div>
+
+    <div id="letterCard" class="sheet-card" hidden>
+      <h2>Plain printer paper</h2>
+      <label class="check-row">
+        <input id="letterCheck" type="checkbox">
+        <span>It's US Letter, 8.5 × 11 in</span>
+      </label>
+    </div>
+
+    <div class="swap-wrap">
+      <button type="button" id="useLetterButton" class="quiet-button">Using plain printer paper instead</button>
+      <button type="button" id="useTemplateButton" class="quiet-button" hidden>Use the printed sheet instead</button>
+    </div>
+
+    <div class="step1-cta">
+      <button type="button" id="openCameraButton" class="button-primary" disabled>Open camera</button>
+    </div>
+  </section>
+
+  <div id="measureRoot" hidden>
+    <div id="stage">
+      <video id="preview" playsinline webkit-playsinline muted autoplay></video>
+      <canvas id="still"></canvas>
+      <canvas id="marks"></canvas>
+    </div>
+
+    <header id="topBar">
+      <button type="button" id="backButton" class="icon-button icon-button-on-photo" aria-label="Back">‹</button>
+      <p id="stepPill"><span id="stepPillStep">Step 2 of 3</span><span id="stepPillDetail">Place the sheet</span></p>
+      <button type="button" id="moreButtonStage" class="icon-button icon-button-on-photo" aria-haspopup="dialog" aria-controls="moreMenu" aria-label="More">
+        ⋯
+        <span id="menuBadgeStage" class="menu-badge"></span>
+      </button>
+    </header>
+
+    <div id="bottomStack">
+      <p id="sheetStatus" hidden>Looking for the sheet…</p>
+      <button type="button" id="shutterButton" aria-label="Take photo"></button>
+      <div id="readout">
+        <div id="placeBlock">
+          <div id="modeToggle" role="group" aria-label="Measurement mode">
+            <button type="button" id="floorModeButton" aria-pressed="true">Door width</button>
+            <button type="button" id="wallModeButton" aria-pressed="false">Height</button>
+          </div>
+          <p id="instructionText">Lay the sheet flat on the floor between the door jambs, square to the door. Back up until both jambs are in view.</p>
         </div>
-        <p id="calibrationHint">A reload clears this.</p>
-      </details>
-      <details id="measurementList">
+        <div id="resultBlock" hidden>
+          <div id="resultInches" aria-live="polite"></div>
+          <p id="resultExact"><span id="resultExactIn"></span><span id="resultExactCm"></span></p>
+          <p id="resultScale"></p>
+          <div id="resultWarning" class="caution-block" hidden>
+            <span class="caution-icon" aria-hidden="true">!</span>
+            <span id="resultWarningText"></span>
+          </div>
+        </div>
+        <div id="resultActions">
+          <button type="button" id="looksRightButton" class="button-primary" hidden>Looks right</button>
+          <button type="button" id="doneAdjustButton" class="button-primary" hidden>Done</button>
+          <button type="button" id="saveButton" class="button-primary" hidden>Save measurement</button>
+          <button type="button" id="retakeButton" class="button-secondary" hidden>Retake</button>
+          <button type="button" id="adjustSheetButton" class="button-text" hidden>Adjust sheet</button>
+          <button type="button" id="clearPointsButton" class="button-text" hidden>Clear points</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="moreBackdrop" hidden></div>
+  <div id="moreMenu" role="dialog" aria-label="More" hidden>
+    <div class="menu-grab" aria-hidden="true"></div>
+    <button type="button" id="menuCloseButton" class="menu-item">Close</button>
+    <button type="button" id="savedToggle" class="menu-item">Saved measurements (0)</button>
+    <div id="savedPanel" class="menu-panel" hidden>
+      <details id="measurementList" open>
         <summary id="measurementSummary">Session list (0)</summary>
         <div id="measurementRows"></div>
       </details>
-      <details id="diagnosticsList">
+    </div>
+    <button type="button" id="copyResultsButton" class="menu-item">Copy results</button>
+    <a id="printSheetMenuLink" class="menu-item" href="template.html" target="_blank" rel="noopener">Print the sheet</a>
+    <button type="button" id="changeSheetButton" class="menu-item">Change sheet</button>
+    <button type="button" id="debugToggle" class="menu-item">Debug log</button>
+    <div id="debugPanel" class="menu-panel" hidden>
+      <div id="statusLines">
+        <p id="visionStatus">Loading vision library…</p>
+        <p id="cameraResolution">Camera: —</p>
+        <p id="tiltReadout">
+          <span>Tilt</span>
+          <span id="tiltAngles">β — · γ —</span>
+          <button type="button" id="enableTiltButton" hidden>Enable tilt</button>
+        </p>
+      </div>
+      <details id="diagnosticsList" open>
         <summary id="diagnosticsSummary">Debug log (0)</summary>
         <div id="diagnosticsPanel"></div>
       </details>
+      <p id="credits">Uses OpenCV.js (Apache-2.0) and js-aruco2 (MIT).</p>
     </div>
-
-    <footer id="credits">Copyright © 2026 Niantic Spatial, Inc. All rights reserved. License: <a href="https://github.com/8thwall/engine/blob/main/LICENSE" target="_blank" rel="noopener">https://github.com/8thwall/engine/blob/main/LICENSE</a> · XRExtras, the coaching overlay and three.js are MIT licensed.</footer>
-    <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
   </div>
+  <textarea id="clipboardFallback" class="clipboard-fallback" readonly aria-hidden="true" tabindex="-1"></textarea>
 </body>
 </html>
