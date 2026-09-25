@@ -35,16 +35,32 @@ function inchStyle(x, y, w, h) {
   return css
 }
 
+function printedPageSizePx() {
+  const spec = (typeof TEMPLATE_LETTER_V1 !== 'undefined' && TEMPLATE_LETTER_V1.pageIn)
+    ? TEMPLATE_LETTER_V1.pageIn
+    : [11, 8.5]
+  return {pageW: spec[0] * 96, pageH: spec[1] * 96}
+}
+
 function fitPrintedPage() {
   const page = document.getElementById('page')
   const stage = document.getElementById('pageStage')
   if (!page || !stage) return
-  const pageW = page.offsetWidth
-  const pageH = page.offsetHeight
+  // True CSS size (11in × 8.5in), not the laid-out box. A flex item with
+  // overflow:hidden otherwise shrinks on a phone and the scale is wrong.
+  const size = printedPageSizePx()
+  const pageW = size.pageW
+  const pageH = size.pageH
   if (!(pageW > 0) || !(pageH > 0)) return
-  const maxW = stage.clientWidth
-  const maxH = Math.max(160, window.innerHeight - 220)
-  const scale = Math.min(maxW / pageW, maxH / pageH, 1)
+  const cs = window.getComputedStyle(stage)
+  const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+  const maxW = Math.max(1, stage.clientWidth - padX)
+  // Fit the stage width. Cap by leftover height only on large screens.
+  let scale = Math.min(maxW / pageW, 1)
+  if (window.innerWidth >= 720) {
+    const maxH = Math.max(160, window.innerHeight - 220)
+    scale = Math.min(scale, maxH / pageH)
+  }
   page.style.transform = `scale(${scale})`
   stage.style.height = `${Math.ceil(pageH * scale)}px`
 }
@@ -68,13 +84,13 @@ function renderTemplatePage() {
   )
   const frameCaption = document.createElement('p')
   frameCaption.className = 'clip-caption'
-  frameCaption.textContent = 'All four corners of this grey frame must be visible on the print. If any is missing, the printer clipped the page — use a larger margin or another printer.'
+  frameCaption.textContent = 'All four corners of this grey frame must show on the print.'
   frame.append(frameCaption)
   page.append(frame)
 
   const title = document.createElement('p')
   title.className = 'page-title'
-  title.textContent = 'ADAPTA door-width reference · Letter · v2 · print at 100 % (Actual size). Do not use \'Fit to page\'.'
+  title.textContent = 'Adapta door-width sheet. Print on US Letter, landscape.'
   page.append(title)
 
   for (let i = 0; i < spec.ids.length; i++) {
@@ -86,17 +102,6 @@ function renderTemplatePage() {
     holder.innerHTML = markerSvgMarkup(id, size)
     page.append(holder)
   }
-
-  const card = document.createElement('div')
-  card.className = 'card-outline'
-  card.style.cssText = inchStyle(layout.card.x, layout.card.y, layout.card.w, layout.card.h)
-  page.append(card)
-
-  const cardLabel = document.createElement('p')
-  cardLabel.className = 'card-label'
-  cardLabel.style.cssText = inchStyle(layout.cardCaption.x, layout.cardCaption.y, layout.cardCaption.w, layout.cardCaption.h)
-  cardLabel.textContent = 'Lay a credit card inside this outline. If its edges do not line up with the box, the print is scaled.'
-  page.append(cardLabel)
 
   const line = document.createElement('div')
   line.className = 'scale-bar-line'
@@ -120,10 +125,45 @@ function renderTemplatePage() {
   const barLabel = document.createElement('p')
   barLabel.className = 'bar-label'
   barLabel.style.cssText = inchStyle(layout.barCaption.x, layout.barCaption.y, layout.barCaption.w, layout.barCaption.h)
-  barLabel.textContent = 'This bar should measure 6.00 in with a tape measure.'
+  barLabel.textContent = 'Tape-measure this line. Enter its length on your phone.'
   page.append(barLabel)
 
   fitPrintedPage()
+}
+
+function shareIsAbort(error) {
+  return !!(error && (error.name === 'AbortError' || error.name === 'NotAllowedError'))
+}
+
+function shareSheetPdf() {
+  const pdfUrl = new URL('adapta-door-sheet-letter.pdf', window.location.href).href
+  const fallback = () => navigator.share({
+    title: 'Adapta door-width sheet',
+    url: window.location.href,
+  })
+  const tryFiles = fetch(pdfUrl).then((res) => {
+    if (!res.ok) throw new Error('pdf missing')
+    return res.blob()
+  }).then((blob) => {
+    const file = new File([blob], 'adapta-door-sheet-letter.pdf', {type: 'application/pdf'})
+    let canFiles = false
+    try {
+      canFiles = !!(navigator.canShare && navigator.canShare({files: [file]}))
+    } catch (err) {
+      canFiles = false
+    }
+    if (!canFiles) return fallback()
+    return navigator.share({
+      title: 'Adapta door-width sheet',
+      files: [file],
+    })
+  })
+  return tryFiles.catch((err) => {
+    if (shareIsAbort(err)) return
+    return fallback()
+  }).catch((err) => {
+    if (shareIsAbort(err)) return
+  })
 }
 
 function bootTemplatePage() {
@@ -131,6 +171,11 @@ function bootTemplatePage() {
   renderTemplatePage()
   const printButton = document.getElementById('printButton')
   if (printButton) printButton.addEventListener('click', () => window.print())
+  const shareButton = document.getElementById('shareButton')
+  if (shareButton) {
+    if (typeof navigator.share !== 'function') shareButton.hidden = true
+    else shareButton.addEventListener('click', () => { shareSheetPdf() })
+  }
   window.addEventListener('resize', fitPrintedPage)
 }
 
